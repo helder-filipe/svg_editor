@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Editor Vetorial Multi-Camada Avançado</title>
+  <!-- Fabric.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background-color: #0f172a;
+      color: #f8fafc;
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px;
+      background-color: #1e293b;
+      border-bottom: 1px solid #334155;
+      align-items: center;
+      flex-wrap: wrap;
+      z-index: 10;
+    }
+
+    .toolbar button,
+    .toolbar label.btn-upload,
+    .toolbar select {
+      background-color: #334155;
+      color: #f8fafc;
+      border: 1px solid #475569;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .toolbar button:hover,
+    .toolbar label.btn-upload:hover,
+    .toolbar select:hover {
+      background-color: #475569;
+      border-color: #64748b;
+    }
+
+    .toolbar button.active {
+      background-color: #0d9488 !important;
+      border-color: #14b8a6 !important;
+      box-shadow: 0 0 6px rgba(20, 184, 166, 0.4);
+    }
+
+    .toolbar input[type="file"] { display: none; }
+
+    .toolbar input[type="color"] {
+      cursor: pointer;
+      border: 1px solid #475569;
+      background: transparent;
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+    }
+
+    .separator {
+      width: 1px;
+      height: 22px;
+      background-color: #475569;
+      margin: 0 2px;
+    }
+
+    .pen-subtools {
+      display: inline-flex;
+      gap: 4px;
+      background-color: #0f172a;
+      padding: 3px 6px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+    }
+
+    .app-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .main-container {
+      display: flex;
+      flex: 1;
+      position: relative;
+      background-color: #0f172a;
+      overflow: auto;
+      padding: 40px;
+    }
+
+    .canvas-wrapper {
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      border-radius: 4px;
+      background-color: #ffffff;
+      margin: auto;
+    }
+
+    .sidebar {
+      width: 310px;
+      background-color: #1e293b;
+      border-left: 1px solid #334155;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 10px;
+    }
+
+    .sidebar h3 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .progress-box {
+      display: none;
+      background-color: #0f172a;
+      border: 1px solid #0d9488;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 11px;
+      color: #14b8a6;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background-color: #334155;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      width: 0%;
+      height: 100%;
+      background-color: #14b8a6;
+      transition: width 0.1s ease;
+    }
+
+    .layer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .layer-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background-color: #334155;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      user-select: none;
+    }
+
+    .layer-item:hover { border-color: #0d9488; }
+    .layer-item.active { 
+      background-color: #0d9488; 
+      color: white; 
+      border-color: #14b8a6;
+    }
+
+    .layer-item.is-path {
+      border-left: 3px solid #38bdf8;
+    }
+
+    .layer-item .layer-info {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .layer-item .layer-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      color: #cbd5e1;
+      cursor: pointer;
+      padding: 2px 4px;
+      font-size: 12px;
+      border-radius: 3px;
+    }
+
+    .btn-icon:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+
+    .status-msg {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      background-color: rgba(15, 23, 42, 0.95);
+      color: #14b8a6;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px solid #0d9488;
+      display: none;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Barra de Ferramentas Superior -->
+  <div class="toolbar">
+    <label class="btn-upload">
+      📁 Importar SVG
+      <input type="file" id="svgFileInput" accept=".svg" onchange="loadSVGFile(event)">
+    </label>
+
+    <div class="separator"></div>
+
+    <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
+    <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
+
+    <div class="pen-subtools">
+      <button id="btnPath" onclick="setActiveTool('path')">📐 Pen</button>
+      <button onclick="closeCurrentPath()" title="Fechar caminho">🔄 Fechar</button>
+      <button onclick="finishPath()" title="Concluir caminho">✅ Concluir</button>
+      <button onclick="cancelPath()" title="Cancelar caminho">❌</button>
+    </div>
+
+    <button id="btnPencil" onclick="setActiveTool('pencil')">✏️ Lápis Livre</button>
+
+    <div class="separator"></div>
+
+    <button onclick="addRect()">🟦 Retângulo</button>
+    <button onclick="addCircle()">🟠 Círculo</button>
+    <button onclick="addLine()">➖ Linha</button>
+    <button onclick="addText()">🔤 Texto</button>
+
+    <select id="symbolSelect" onchange="addSymbol(this.value)">
+      <option value="" disabled selected>➕ Galeria de Símbolos...</option>
+      <optgroup label="Infraestruturas e Obras">
+        <option value="construction">🚧 Obras / Trabalho</option>
+        <option value="water_tap">🚰 Água / Torneira</option>
+        <option value="flash">⚡ Eletricidade / Energia</option>
+        <option value="trash">🗑️ Resíduos / Contentor</option>
+      </optgroup>
+      <optgroup label="Sinalética e Informação">
+        <option value="warning">⚠️ Sinal de Aviso</option>
+        <option value="info">ℹ️ Ponto de Informação</option>
+        <option value="location">📍 Localização / Pin</option>
+      </optgroup>
+      <optgroup label="Desporto e Natureza">
+        <option value="padel">🎾 Padel / Ténis</option>
+        <option value="tree">🌳 Árvore / Espaço Verde</option>
+      </optgroup>
+    </select>
+
+    <div class="separator"></div>
+
+    <select id="strokeDashSelect" onchange="updateStrokeStyle()">
+      <option value="solid">― Traço Contínuo</option>
+      <option value="dashed">--- Traço Descontínuo</option>
+      <option value="dotted">··· Pontilhado</option>
+    </select>
+
+    <div class="separator"></div>
+
+    <label for="fillColor" style="font-size: 11px;">Cor:</label>
+    <input type="color" id="fillColor" value="#0d9488" onchange="updateColor(this.value)">
+
+    <button onclick="ungroupSelected()" style="background-color: #0284c7; border-color: #38bdf8;">🔓 Desagrupar Avançado</button>
+    <button onclick="deleteSelected()" style="background-color: #ef4444; border-color: #f87171;">🗑️ Eliminar</button>
+
+    <button onclick="resetZoom()">🔍 100%</button>
+    <button onclick="exportSVG()" style="background-color: #16a34a; border-color: #22c55e; margin-left: auto;">💾 Exportar SVG</button>
+  </div>
+
+  <div class="app-body">
+    <div class="main-container" id="mainContainer">
+      <div class="canvas-wrapper">
+        <canvas id="vectorCanvas" width="1200" height="800"></canvas>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
+
+      <div class="progress-box" id="progressBox">
+        <div style="display: flex; justify-content: space-between;">
+          <span id="progressText">A processar camadas...</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressBarFill"></div>
+        </div>
+      </div>
+
+      <div class="layer-list" id="layerList">
+        <div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">
+          Nenhum elemento no canvas
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-msg" id="statusMsg"></div>
+
+  <script>
+    const canvas = new fabric.Canvas('vectorCanvas', {
+      isDrawingMode: false,
+      selection: true,
+      preserveObjectStacking: true,
+      renderOnAddRemove: false,
+      subTargetCheck: false,
+      // Com mapas muito grandes (milhares de sub-camadas), o "retina scaling"
+      // do Fabric.js multiplica a resolução (e a memória) de todos os canvas
+      // internos em ecrãs de alta densidade (Retina/4K/escalas 125-200%),
+      // o que pode esgotar a memória/GPU do browser e fazer camadas
+      // "perderem" a cor. Desligar aqui evita esse consumo extra.
+      enableRetinaScaling: false
+    });
+
+    let currentTool = 'select';
+    let isHandDragging = false;
+    let handLastX = 0, handLastY = 0;
+    let isBatchUpdating = false;
+
+    let pathPoints = [];
+    let activePathLine = null;
+
+    function showStatus(msg) {
+      const el = document.getElementById('statusMsg');
+      el.innerText = msg;
+      el.style.display = 'block';
+      setTimeout(() => el.style.display = 'none', 3000);
+    }
+
+    function updateProgress(current, total, label = 'A processar camadas...') {
+      const box = document.getElementById('progressBox');
+      const text = document.getElementById('progressText');
+      const percent = document.getElementById('progressPercent');
+      const fill = document.getElementById('progressBarFill');
+
+      if (total === 0 || current >= total) {
+        box.style.display = 'none';
+        fill.style.width = '0%';
+        return;
+      }
+
+      box.style.display = 'flex';
+      const pct = Math.round((current / total) * 100);
+      text.innerText = label;
+      percent.innerText = `${pct}%`;
+      fill.style.width = `${pct}%`;
+    }
+
+    function setActiveTool(tool) {
+      currentTool = tool;
+      document.querySelectorAll('.toolbar button').forEach(btn => btn.classList.remove('active'));
+
+      canvas.isDrawingMode = false;
+
+      if (tool === 'select') {
+        document.getElementById('btnSelect').classList.add('active');
+        canvas.selection = true;
+        canvas.defaultCursor = 'default';
+        setObjectsInteractive(true);
+      } else if (tool === 'hand') {
+        document.getElementById('btnHand').classList.add('active');
+        canvas.selection = false;
+        canvas.defaultCursor = 'grab';
+        setObjectsInteractive(false);
+      } else if (tool === 'path') {
+        document.getElementById('btnPath').classList.add('active');
+        canvas.selection = false;
+        canvas.defaultCursor = 'crosshair';
+        setObjectsInteractive(false);
+        showStatus('📐 Modo Pen: Clica no canvas para adicionar pontos ao caminho.');
+      } else if (tool === 'pencil') {
+        document.getElementById('btnPencil').classList.add('active');
+        canvas.isDrawingMode = true;
+        canvas.freeDrawingBrush.color = document.getElementById('fillColor').value;
+        canvas.freeDrawingBrush.width = 3;
+        setObjectsInteractive(false);
+      }
+    }
+
+    function setObjectsInteractive(enable) {
+      canvas.forEachObject(function (obj) {
+        obj.selectable = enable;
+        obj.evented = enable;
+      });
+      canvas.renderAll();
+    }
+
+    // -------------------------------------------------------------
+    // PRÉ-PROCESSADOR CSS (INJETA CORES E ESTILOS CSS DIRETAMENTE NOS ELEMENTOS)
+    // Resolve o problema de perda de cores quando há estilos definidos via <style>
+    // ou atributos CSS no SVG original.
+    // -------------------------------------------------------------
+    function prepareSVGWithStyles(svgString) {
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgString, 'image/svg+xml');
+
+        // Verifica se há erro de parsing
+        const parserError = doc.querySelector('parsererror');
+        if (parserError) {
+          console.warn('Aviso de parsing SVG, a usar SVG original.');
+          return svgString;
+        }
+
+        const svgEl = doc.documentElement;
+        if (!svgEl || svgEl.tagName.toLowerCase() !== 'svg') {
+          return svgString;
+        }
+
+        // 1. Extrair todas as regras CSS de <style> dentro do SVG
+        const styleElements = svgEl.querySelectorAll('style');
+        let cssRules = [];
+
+        styleElements.forEach(styleEl => {
+          const cssText = styleEl.textContent || '';
+          // Faz parse das regras CSS simples: .className { prop: value; ... }
+          const ruleRegex = /([^{}]+)\{([^{}]*)\}/g;
+          let match;
+          while ((match = ruleRegex.exec(cssText)) !== null) {
+            const selectors = match[1].trim().split(',').map(s => s.trim());
+            const propsText = match[2].trim();
+            const props = {};
+            propsText.split(';').forEach(prop => {
+              const parts = prop.split(':').map(p => p.trim());
+              if (parts.length === 2) {
+                props[parts[0]] = parts[1];
+              }
+            });
+            selectors.forEach(sel => {
+              cssRules.push({ selector: sel, props: props });
+            });
+          }
+        });
+
+        // 2. Função auxiliar: verifica se o elemento já tem essa propriedade
+        //    definida no atributo style="" inline (esse sim tem prioridade máxima,
+        //    acima de qualquer classe CSS)
+        function hasInlineStyleProp(el, prop) {
+          const styleAttr = el.getAttribute('style');
+          if (!styleAttr) return false;
+          const re = new RegExp('(^|;)\\s*' + prop + '\\s*:', 'i');
+          return re.test(styleAttr);
+        }
+
+        // 3. Função para aplicar estilos CSS a um elemento
+        function applyStyleToElement(el, rules) {
+          rules.forEach(rule => {
+            const sel = rule.selector;
+            let matches = false;
+
+            if (sel.startsWith('.')) {
+              // Seletor de classe: .className
+              const className = sel.substring(1);
+              if (el.getAttribute('class')) {
+                const classes = el.getAttribute('class').trim().split(/\s+/);
+                if (classes.includes(className)) {
+                  matches = true;
+                }
+              }
+            } else if (sel.startsWith('#')) {
+              // Seletor de ID: #id
+              const id = sel.substring(1);
+              if (el.getAttribute('id') === id) {
+                matches = true;
+              }
+            } else if (sel === el.tagName.toLowerCase()) {
+              // Seletor de tag
+              matches = true;
+            }
+
+            if (matches) {
+              Object.keys(rule.props).forEach(prop => {
+                // As classes CSS têm prioridade sobre atributos de apresentação
+                // (fill="...", stroke="..." soltos no elemento), tal como no
+                // comportamento real do CSS/SVG. Só um style="" inline explícito
+                // é que continua a ganhar à classe.
+                if (!hasInlineStyleProp(el, prop)) {
+                  el.setAttribute(prop, rule.props[prop]);
+                }
+              });
+            }
+          });
+        }
+
+        // 4. Aplicar regras CSS a todos os elementos com atributo 'class'
+        if (cssRules.length > 0) {
+          const allElements = svgEl.querySelectorAll('*');
+          allElements.forEach(el => {
+            applyStyleToElement(el, cssRules);
+          });
+          // Remover os <style> pois já foram aplicados inline
+          styleElements.forEach(s => s.remove());
+        }
+
+        // 5. Serializar de volta para string
+        const serializer = new XMLSerializer();
+        return serializer.serializeToString(doc);
+
+      } catch (err) {
+        console.error('Erro ao pré-processar SVG, a usar original:', err);
+        return svgString;
+      }
+    }
+
+    function loadSVGFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      showStatus('⏳ A carregar vetor com fidelidade nativa de cores...');
+      const reader = new FileReader();
+
+      reader.onload = function (f) {
+        const svgString = f.target.result;
+
+        // Pré-processa o SVG para injetar estilos CSS inline nos elementos
+        // Isto garante que as cores não se percam ao carregar no Fabric.js
+        const processedSVG = prepareSVGWithStyles(svgString);
+
+        const blob = new Blob([processedSVG], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+
+        fabric.Image.fromURL(url, function (img) {
+          if (!img) {
+            showStatus('⚠️ Erro ao renderizar o ficheiro SVG.');
+            return;
+          }
+
+          img.rawSVGData = processedSVG;
+
+          const scale = Math.min(
+            (canvas.width * 0.85) / img.width,
+            (canvas.height * 0.85) / img.height
+          );
+
+          img.set({
+            scaleX: scale,
+            scaleY: scale,
+            left: canvas.width / 2,
+            top: canvas.height / 2,
+            originX: 'center',
+            originY: 'center',
+            cornerColor: '#0d9488',
+            cornerStyle: 'circle',
+            transparentCorners: false,
+                  objectCaching: true,
+                  noScaleCache: false
+          });
+
+          canvas.add(img);
+          canvas.setActiveObject(img);
+          canvas.renderAll();
+
+          setActiveTool('select');
+          updateLayerPanel();
+          showStatus('✅ Mapa e cores carregados com precisão!');
+        });
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    }
+
+    // -------------------------------------------------------------
+    // FERRAMENTAS PAN E PEN
+    // -------------------------------------------------------------
+    canvas.on('mouse:down', function (opt) {
+      if (currentTool === 'hand') {
+        isHandDragging = true;
+        canvas.defaultCursor = 'grabbing';
+        handLastX = opt.e.clientX;
+        handLastY = opt.e.clientY;
+      }
+    });
+
+    canvas.on('mouse:move', function (opt) {
+      if (isHandDragging && currentTool === 'hand') {
+        const e = opt.e;
+        const vpt = canvas.viewportTransform;
+        vpt[4] += e.clientX - handLastX;
+        vpt[5] += e.clientY - handLastY;
+        canvas.requestRenderAll();
+        handLastX = e.clientX;
+        handLastY = e.clientY;
+      }
+    });
+
+    canvas.on('mouse:up', function () {
+      if (currentTool === 'hand') {
+        isHandDragging = false;
+        canvas.defaultCursor = 'grab';
+      }
+    });
+
+    canvas.on('mouse:down', function (opt) {
+      if (currentTool === 'path') {
+        const pointer = canvas.getPointer(opt.e);
+        pathPoints.push({ x: pointer.x, y: pointer.y });
+        drawPolylinePath(false);
+      }
+    });
+
+    function drawPolylinePath(isClosed = false) {
+      if (activePathLine) canvas.remove(activePathLine);
+      if (pathPoints.length < 2) return;
+
+      const strokeColor = document.getElementById('fillColor').value;
+
+      if (isClosed) {
+        activePathLine = new fabric.Polygon(pathPoints, {
+          stroke: strokeColor,
+          fill: strokeColor + '33',
+          strokeWidth: 3,
+          cornerColor: '#0d9488',
+          cornerStyle: 'circle',
+          transparentCorners: false
+        });
+      } else {
+        activePathLine = new fabric.Polyline(pathPoints, {
+          stroke: strokeColor,
+          fill: 'transparent',
+          strokeWidth: 3,
+          cornerColor: '#0d9488',
+          cornerStyle: 'circle',
+          transparentCorners: false
+        });
+      }
+
+      applyDashToObj(activePathLine);
+      canvas.add(activePathLine);
+      canvas.renderAll();
+    }
+
+    function closeCurrentPath() {
+      if (pathPoints.length > 2) {
+        drawPolylinePath(true);
+        finishPath();
+      } else {
+        showStatus('⚠️ Precisa de pelo menos 3 pontos para fechar o caminho.');
+      }
+    }
+
+    function finishPath() {
+      if (pathPoints.length > 1) {
+        activePathLine = null;
+        pathPoints = [];
+        setActiveTool('select');
+        updateLayerPanel();
+        showStatus('📐 Caminho vetorial concluído!');
+      }
+    }
+
+    function cancelPath() {
+      if (activePathLine) {
+        canvas.remove(activePathLine);
+        activePathLine = null;
+      }
+      pathPoints = [];
+      canvas.renderAll();
+      updateLayerPanel();
+      showStatus('❌ Caminho cancelado.');
+    }
+
+    window.addEventListener('keydown', function (e) {
+      if (currentTool === 'path') {
+        if (e.key === 'Enter') finishPath();
+        if (e.key === 'Escape') cancelPath();
+      }
+    });
+
+    canvas.on('mouse:dblclick', function () {
+      if (currentTool === 'path') {
+        finishPath();
+      }
+    });
+
+    // -------------------------------------------------------------
+    // SÍMBOLOS E FORMAS
+    // -------------------------------------------------------------
+    function addSymbol(type) {
+      if (!type) return;
+      setActiveTool('select');
+
+      let pathData = '';
+      if (type === 'construction') pathData = 'M22 19H2v-2h20v2zm-11-4h2v-4h-2v4zm-4 0h2v-4H7v4zm8 0h2v-4h-2v4zM12 2L1 11h22L12 2z';
+      else if (type === 'water_tap') pathData = 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z';
+      else if (type === 'flash') pathData = 'M7 2v11h3v9l7-12h-4l4-8z';
+      else if (type === 'trash') pathData = 'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z';
+      else if (type === 'warning') pathData = 'M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2v-4h2v4z';
+      else if (type === 'info') pathData = 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z';
+      else if (type === 'location') pathData = 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z';
+      else if (type === 'padel') pathData = 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 14.5a1.5 1.5 0 1 1 1.5-1.5 1.5 1.5 0 0 1-1.5 1.5zm3-4a1.5 1.5 0 1 1 1.5-1.5 1.5 1.5 0 0 1-1.5 1.5z';
+      else if (type === 'tree') pathData = 'M12 2L5 12h3v7h8v-7h3L12 2z';
+
+      const path = new fabric.Path(pathData, {
+        left: canvas.width / 2 - 20,
+        top: canvas.height / 2 - 20,
+        fill: document.getElementById('fillColor').value,
+        scaleX: 2, scaleY: 2,
+        cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
+      });
+
+      canvas.add(path);
+      canvas.setActiveObject(path);
+      canvas.renderAll();
+      document.getElementById('symbolSelect').value = '';
+    }
+
+    function addRect() {
+      setActiveTool('select');
+      const rect = new fabric.Rect({
+        left: canvas.width / 2 - 50, top: canvas.height / 2 - 40,
+        fill: document.getElementById('fillColor').value,
+        width: 100, height: 80,
+        cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
+      });
+      canvas.add(rect);
+      canvas.setActiveObject(rect);
+      canvas.renderAll();
+    }
+
+    function addCircle() {
+      setActiveTool('select');
+      const circle = new fabric.Circle({
+        left: canvas.width / 2 - 40, top: canvas.height / 2 - 40,
+        fill: document.getElementById('fillColor').value,
+        radius: 40,
+        cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
+      });
+      canvas.add(circle);
+      canvas.setActiveObject(circle);
+      canvas.renderAll();
+    }
+
+    function addLine() {
+      setActiveTool('select');
+      const line = new fabric.Line([100, 100, 300, 100], {
+        stroke: document.getElementById('fillColor').value,
+        strokeWidth: 4,
+        cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
+      });
+      applyDashToObj(line);
+      canvas.add(line);
+      canvas.setActiveObject(line);
+      canvas.renderAll();
+    }
+
+    function addText() {
+      setActiveTool('select');
+      const text = new fabric.Textbox('Novo Texto', {
+        left: canvas.width / 2 - 50, top: canvas.height / 2 - 15,
+        fill: document.getElementById('fillColor').value,
+        fontSize: 24,
+        cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
+      });
+      canvas.add(text);
+      canvas.setActiveObject(text);
+      canvas.renderAll();
+    }
+
+    function updateStrokeStyle() {
+      const activeObj = canvas.getActiveObject();
+      if (activeObj) {
+        applyDashToObj(activeObj);
+        canvas.renderAll();
+      }
+    }
+
+    function applyDashToObj(obj) {
+      const type = document.getElementById('strokeDashSelect').value;
+      if (type === 'solid') obj.set('strokeDashArray', null);
+      else if (type === 'dashed') obj.set('strokeDashArray', [10, 5]);
+      else if (type === 'dotted') obj.set('strokeDashArray', [3, 3]);
+    }
+
+    function updateColor(color) {
+      if (canvas.isDrawingMode) {
+        canvas.freeDrawingBrush.color = color;
+      } else {
+        const activeObj = canvas.getActiveObject();
+        if (activeObj) {
+          if (activeObj.type === 'activeSelection' || activeObj.type === 'group') {
+            const objs = activeObj.getObjects ? activeObj.getObjects() : [];
+            objs.forEach(obj => {
+              if (obj.fill && obj.fill !== 'transparent') obj.set('fill', color);
+              if (obj.stroke) obj.set('stroke', color);
+            });
+          } else {
+            if (activeObj.fill && activeObj.fill !== 'transparent') activeObj.set('fill', color);
+            if (activeObj.stroke) activeObj.set('stroke', color);
+          }
+          canvas.renderAll();
+        }
+      }
+    }
+
+    // -------------------------------------------------------------
+    // DESAGRUPAMENTO OTIMIZADO DE MEIO TERMO (VELOCIDADE + BARRA + CORES)
+    // -------------------------------------------------------------
+    async function ungroupSelected() {
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) {
+        showStatus('⚠️ Seleciona primeiro a camada do mapa no canvas ou na lista.');
+        return;
+      }
+
+      isBatchUpdating = true;
+
+      if (activeObj.type === 'image' && activeObj.rawSVGData) {
+        showStatus('⏳ A extrair sub-camadas com cores preservadas...');
+        updateProgress(1, 100, 'A preparar estilo...');
+
+        const preparedSVG = activeObj.rawSVGData;
+
+        const origScaleX = activeObj.scaleX || 1;
+        const origScaleY = activeObj.scaleY || 1;
+        const origLeft = activeObj.left;
+        const origTop = activeObj.top;
+
+        fabric.loadSVGFromString(activeObj.rawSVGData, async function (objects, options) {
+          if (!objects || objects.length === 0) {
+            showStatus('⚠️ Não foram encontradas sub-camadas.');
+            updateProgress(0, 0);
+            isBatchUpdating = false;
+            return;
+          }
+
+          canvas.remove(activeObj);
+          const total = objects.length;
+          const chunkSize = 50; // Lote equilibrado para velocidade e fluidez da UI
+
+          for (let i = 0; i < total; i += chunkSize) {
+            const chunk = objects.slice(i, i + chunkSize);
+
+            chunk.forEach(obj => {
+              if (obj) {
+                obj.set({
+                  scaleX: obj.scaleX * origScaleX,
+                  scaleY: obj.scaleY * origScaleY,
+                  left: origLeft + (obj.left - (options.width / 2 || 0)) * origScaleX,
+                  top: origTop + (obj.top - (options.height / 2 || 0)) * origScaleY,
+                  cornerColor: '#0d9488',
+                  cornerStyle: 'circle',
+                  transparentCorners: false,
+                  // Desativa o cache individual por objeto: com milhares de
+                  // sub-camadas, cada uma criaria o seu próprio canvas interno
+                  // de cache, o que pode esgotar a memória/GPU do browser e
+                  // fazer algumas camadas "perderem" a cor (ficam pretas ou
+                  // transparentes) quando o browser descarta caches antigos.
+                  objectCaching: false
+                });
+                canvas.add(obj);
+              }
+            });
+
+            const currentCount = Math.min(i + chunkSize, total);
+            updateProgress(currentCount, total, `A importar ${currentCount} de ${total}...`);
+            await new Promise(r => setTimeout(r, 15)); // Pequena pausa que atualiza a barra de progresso sem travar
+          }
+
+          isBatchUpdating = false;
+          updateProgress(total, total);
+          canvas.renderAll();
+          updateLayerPanel();
+          showStatus(`🔓 Desagrupado com sucesso! (${total} sub-camadas)`);
+        });
+        return;
+      }
+
+      if (activeObj.type === 'group') {
+        const items = activeObj.getObjects();
+        activeObj._restoreObjectsState();
+        canvas.remove(activeObj);
+
+        items.forEach(item => {
+          item.set({
+            cornerColor: '#0d9488',
+            cornerStyle: 'circle',
+            transparentCorners: false,
+            objectCaching: false
+          });
+          canvas.add(item);
+        });
+
+        isBatchUpdating = false;
+        canvas.renderAll();
+        updateLayerPanel();
+        showStatus(`🔓 Desagrupado com sucesso!`);
+      } else {
+        isBatchUpdating = false;
+        showStatus('💡 Esta camada já é um elemento individual.');
+      }
+    }
+
+    function deleteSelected() {
+      const activeObjects = canvas.getActiveObjects();
+      if (activeObjects.length) {
+        activeObjects.forEach(obj => canvas.remove(obj));
+        canvas.discardActiveObject();
+        canvas.renderAll();
+        updateLayerPanel();
+      }
+    }
+
+    // -------------------------------------------------------------
+    // PAINEL DE CAMADAS
+    // -------------------------------------------------------------
+    function updateLayerPanel() {
+      if (isBatchUpdating) return;
+
+      const layerList = document.getElementById('layerList');
+      const objects = canvas.getObjects();
+      document.getElementById('layerCount').innerText = objects.length;
+      layerList.innerHTML = '';
+
+      if (objects.length === 0) {
+        layerList.innerHTML = '<div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">Nenhum elemento no canvas</div>';
+        return;
+      }
+
+      const activeObject = canvas.getActiveObject();
+
+      [...objects].reverse().forEach((obj, idx) => {
+        const item = document.createElement('div');
+        const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
+
+        item.className = 'layer-item' + (isPathObj ? ' is-path' : '');
+
+        if (activeObject === obj || (activeObject && activeObject.type === 'activeSelection' && activeObject.contains && activeObject.contains(obj))) {
+          item.classList.add('active');
+        }
+
+        let name = 'Sub-camada Vetorial';
+        if (obj.type === 'rect') name = '🟦 Retângulo';
+        else if (obj.type === 'circle') name = '🟠 Círculo';
+        else if (obj.type === 'line') name = '➖ Linha';
+        else if (obj.type === 'polyline') name = `📐 Path (${obj.points ? obj.points.length : 0} pts)`;
+        else if (obj.type === 'polygon') name = `📐 Polígono (${obj.points ? obj.points.length : 0} pts)`;
+        else if (obj.type === 'textbox') name = '🔤 Texto';
+        else if (obj.type === 'group') name = `📦 Grupo (${obj.getObjects().length} elem.)`;
+        else if (obj.type === 'image') name = '🗺️ Mapa Vetorial Completo';
+        else if (obj.type === 'path') name = '✏️ Path / Símbolo';
+
+        const isVisible = obj.visible !== false;
+
+        item.innerHTML = `
+          <div class="layer-info">
+            <span>${name}</span>
+          </div>
+          <div class="layer-actions">
+            <button class="btn-icon" title="${isVisible ? 'Ocultar' : 'Mostrar'}" onclick="toggleVisibility(event, ${objects.length - 1 - idx})">
+              ${isVisible ? '👁️' : '🙈'}
+            </button>
+          </div>
+        `;
+
+        item.onclick = function (e) {
+          if (e.target.tagName === 'BUTTON') return;
+          if (currentTool === 'select') {
+            if (obj.visible !== false) {
+              canvas.setActiveObject(obj);
+              canvas.renderAll();
+              updateLayerPanel();
+            } else {
+              showStatus('💡 Torne a camada visível antes de a selecionar.');
+            }
+          }
+        };
+
+        layerList.appendChild(item);
+      });
+    }
+
+    function toggleVisibility(e, realIndex) {
+      e.stopPropagation();
+      const objects = canvas.getObjects();
+      const obj = objects[realIndex];
+      if (obj) {
+        obj.visible = !obj.visible;
+        if (!obj.visible && canvas.getActiveObject() === obj) {
+          canvas.discardActiveObject();
+        }
+        canvas.renderAll();
+        updateLayerPanel();
+      }
+    }
+
+    canvas.on('object:added', updateLayerPanel);
+    canvas.on('object:removed', updateLayerPanel);
+    canvas.on('selection:created', updateLayerPanel);
+    canvas.on('selection:updated', updateLayerPanel);
+    canvas.on('selection:cleared', updateLayerPanel);
+
+    // -------------------------------------------------------------
+    // CONTROLO DE ZOOM
+    // -------------------------------------------------------------
+    canvas.on('mouse:wheel', function (opt) {
+      const e = opt.e;
+      let zoom = canvas.getZoom();
+
+      zoom *= Math.pow(0.998, e.deltaY);
+      zoom = Math.max(0.1, Math.min(8, zoom));
+
+      canvas.zoomToPoint(new fabric.Point(e.offsetX, e.offsetY), zoom);
+
+      e.preventDefault();
+      e.stopPropagation();
+      canvas.requestRenderAll();
+    });
+
+    function resetZoom() {
+      canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    }
+
+    function exportSVG() {
+      const svgData = canvas.toSVG();
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'desenho_vetorial.svg';
+      link.click();
+    }
+  </script>
+</body>
+</html>
