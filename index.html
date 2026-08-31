@@ -269,7 +269,7 @@
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
     
-    <!-- Recorte Nativo Estilo Word -->
+    <!-- Recorte Nativo Direto estilo Word -->
     <div class="crop-subtools">
       <button id="btnWordCrop" onclick="startWordStyleCrop()" style="background-color: #0284c7; border-color: #38bdf8;">✂️ Recortar (Estilo Word)</button>
       <button id="btnConfirmCrop" onclick="confirmWordCrop()" style="display:none; background-color: #16a34a; border-color: #22c55e;">✅ Confirmar</button>
@@ -406,10 +406,11 @@
     let activePathLine = null;
     let clipboard = null;
 
-    // VARIÁVEIS PARA RECORTE NATIVO DIRETO
+    // VARIÁVEIS PARA RECORTE DIRETO NOS MANIPULADORES NATIVOS DO OBJETO
     let isCropMode = false;
     let targetCropObj = null;
-    let cropOverlay = null;
+    let cropOriginalProps = null;
+    let activeCorner = null;
 
     // LÓGICA DE UNDO
     const undoStack = [];
@@ -540,16 +541,14 @@
 
     function setObjectsInteractive(enable) {
       canvas.forEachObject(function (obj) {
-        if (obj !== cropOverlay) {
-          obj.selectable = enable;
-          obj.evented = enable;
-        }
+        obj.selectable = enable;
+        obj.evented = enable;
       });
       canvas.renderAll();
     }
 
     // -------------------------------------------------------------
-    // RECORTE UNILATERAL PERFEITO (MOLDURA DE RECORTE ALINHADA NOS 8 LADOS)
+    // RECORTE NATIVO DIRETO NOS 8 PONTOS DO PRÓPRIO OBJETO (SEM FORMAS A PARTE)
     // -------------------------------------------------------------
     function startWordStyleCrop() {
       const activeObj = canvas.getActiveObject();
@@ -561,117 +560,160 @@
       isCropMode = true;
       targetCropObj = activeObj;
 
-      // Desativa interação temporária no objeto original
-      targetCropObj.selectable = false;
-      targetCropObj.evented = false;
+      // Guarda estado original
+      cropOriginalProps = {
+        left: targetCropObj.left,
+        top: targetCropObj.top,
+        width: targetCropObj.width,
+        height: targetCropObj.height,
+        scaleX: targetCropObj.scaleX,
+        scaleY: targetCropObj.scaleY,
+        cropX: targetCropObj.cropX || 0,
+        cropY: targetCropObj.cropY || 0,
+        clipPath: targetCropObj.clipPath,
+        originX: targetCropObj.originX,
+        originY: targetCropObj.originY
+      };
 
-      const bound = targetCropObj.getBoundingRect();
-
-      // Cria a caixa de recorte exatamente em cima do objeto original
-      cropOverlay = new fabric.Rect({
-        left: bound.left,
-        top: bound.top,
-        width: bound.width,
-        height: bound.height,
-        fill: 'transparent',
-        stroke: '#0f172a',
-        strokeWidth: 2,
-        strokeDashArray: [4, 4],
+      // Muda o estilo dos manipuladores do PRÓPRIO OBJETO para estilo Recorte Word (Pretos)
+      targetCropObj.set({
         cornerColor: '#0f172a',
         cornerStrokeColor: '#38bdf8',
         cornerStyle: 'rect',
         cornerSize: 10,
         transparentCorners: false,
+        lockRotation: true,
         hasRotatingPoint: false
       });
 
-      canvas.add(cropOverlay);
-      canvas.setActiveObject(cropOverlay);
       canvas.renderAll();
 
       document.getElementById('btnWordCrop').style.display = 'none';
       document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
       document.getElementById('btnCancelCrop').style.display = 'inline-flex';
 
-      showStatus('✂️ Puxa qualquer um dos 8 manipuladores para recortar essa margem.');
+      showStatus('✂️ Puxa diretamente qualquer um dos 8 manipuladores pretos para recortar.');
     }
 
-    function confirmWordCrop() {
-      if (!targetCropObj || !cropOverlay) return;
+    // Identifica o manipulador exato que começou a ser arrastado
+    canvas.on('before:transform', function (opt) {
+      if (isCropMode && opt.transform) {
+        activeCorner = opt.transform.corner;
 
-      const cropBound = cropOverlay.getBoundingRect();
-      const objBound = targetCropObj.getBoundingRect();
+        // Ajusta temporariamente a origem da transformação para o lado OPOSTO ao manipulador arrastado,
+        // garantindo que o lado oposto permaneça 100% fixo no canvas!
+        const obj = opt.transform.target;
+        if (activeCorner === 'mr') { obj.originX = 'left'; }
+        else if (activeCorner === 'ml') { obj.originX = 'right'; }
+        else if (activeCorner === 'mb') { obj.originY = 'top'; }
+        else if (activeCorner === 'mt') { obj.originY = 'bottom'; }
+        else if (activeCorner === 'tl') { obj.originX = 'right'; obj.originY = 'bottom'; }
+        else if (activeCorner === 'tr') { obj.originX = 'left'; obj.originY = 'bottom'; }
+        else if (activeCorner === 'bl') { obj.originX = 'right'; obj.originY = 'top'; }
+        else if (activeCorner === 'br') { obj.originX = 'left'; obj.originY = 'top'; }
 
-      // Calcula as coordenadas exatas do corte
-      const relLeft = Math.max(0, cropBound.left - objBound.left);
-      const relTop = Math.max(0, cropBound.top - objBound.top);
-      const relWidth = Math.min(objBound.width - relLeft, cropBound.width);
-      const relHeight = Math.min(objBound.height - relTop, cropBound.height);
+        obj.setCoords();
+      }
+    });
 
-      if (targetCropObj.type === 'image') {
-        const sX = targetCropObj.scaleX;
-        const sY = targetCropObj.scaleY;
+    // Processa o corte em tempo real em resposta ao arrasto do manipulador
+    canvas.on('object:scaling', function (e) {
+      if (!isCropMode || e.target !== targetCropObj) return;
 
-        targetCropObj.set({
-          cropX: (targetCropObj.cropX || 0) + (relLeft / sX),
-          cropY: (targetCropObj.cropY || 0) + (relTop / sY),
-          width: relWidth / sX,
-          height: relHeight / sY,
-          left: cropBound.left + (relWidth / 2),
-          top: cropBound.top + (relHeight / 2),
-          originX: 'center',
-          originY: 'center'
+      const obj = e.target;
+
+      // Impede deformações: a escala do conteúdo é travada
+      const currentScaleX = cropOriginalProps.scaleX;
+      const currentScaleY = cropOriginalProps.scaleY;
+
+      // Calcula as dimensões resultantes em pixels
+      const newWidth = obj.width * obj.scaleX;
+      const newHeight = obj.height * obj.scaleY;
+
+      if (obj.type === 'image') {
+        // Aplicação de corte nativo de imagem em pixels
+        obj.set({
+          width: newWidth / currentScaleX,
+          height: newHeight / currentScaleY,
+          scaleX: currentScaleX,
+          scaleY: currentScaleY
         });
       } else {
-        // Máscara universal para símbolos e formas vetoriais
+        // Aplicação de máscara para formas e símbolos vetoriais
         const clipRect = new fabric.Rect({
-          left: (cropBound.left - objBound.left - objBound.width / 2) / targetCropObj.scaleX,
-          top: (cropBound.top - objBound.top - objBound.height / 2) / targetCropObj.scaleY,
-          width: relWidth / targetCropObj.scaleX,
-          height: relHeight / targetCropObj.scaleY,
+          left: -newWidth / 2,
+          top: -newHeight / 2,
+          width: newWidth / currentScaleX,
+          height: newHeight / currentScaleY,
           originX: 'left',
           originY: 'top'
         });
-
-        targetCropObj.set({ clipPath: clipRect });
+        obj.set({ clipPath: clipRect });
       }
 
-      targetCropObj.setCoords();
-
-      canvas.remove(cropOverlay);
-      cropOverlay = null;
-
-      const objToSelect = targetCropObj;
-      resetCropUI();
-
-      setActiveTool('select');
-      canvas.setActiveObject(objToSelect);
+      obj.setCoords();
       canvas.renderAll();
+    });
 
+    function confirmWordCrop() {
+      if (!targetCropObj) return;
+
+      // Restaura a origem centralizada padrão sem mover o objeto do sítio
+      const center = targetCropObj.getCenterPoint();
+
+      targetCropObj.set({
+        originX: 'center',
+        originY: 'center',
+        left: center.x,
+        top: center.y,
+        cornerColor: '#0d9488',
+        cornerStyle: 'circle',
+        cornerSize: 12,
+        transparentCorners: false,
+        lockRotation: false
+      });
+
+      targetCropObj.setCoords();
+      resetCropUI();
       saveState();
-      showStatus('✅ Recorte efetuado com sucesso!');
+      showStatus('✅ Recorte do objeto confirmado!');
     }
 
     function cancelWordCrop() {
-      if (cropOverlay) canvas.remove(cropOverlay);
+      if (targetCropObj && cropOriginalProps) {
+        targetCropObj.set({
+          scaleX: cropOriginalProps.scaleX,
+          scaleY: cropOriginalProps.scaleY,
+          left: cropOriginalProps.left,
+          top: cropOriginalProps.top,
+          width: cropOriginalProps.width,
+          height: cropOriginalProps.height,
+          cropX: cropOriginalProps.cropX,
+          cropY: cropOriginalProps.cropY,
+          clipPath: cropOriginalProps.clipPath,
+          originX: cropOriginalProps.originX || 'center',
+          originY: cropOriginalProps.originY || 'center',
+          cornerColor: '#0d9488',
+          cornerStyle: 'circle',
+          lockRotation: false
+        });
+        targetCropObj.setCoords();
+      }
+
       resetCropUI();
       showStatus('❌ Recorte cancelado.');
     }
 
     function resetCropUI() {
       isCropMode = false;
-      if (targetCropObj) {
-        targetCropObj.selectable = true;
-        targetCropObj.evented = true;
-      }
       targetCropObj = null;
-      cropOverlay = null;
+      cropOriginalProps = null;
+      activeCorner = null;
 
       document.getElementById('btnWordCrop').style.display = 'inline-flex';
       document.getElementById('btnConfirmCrop').style.display = 'none';
       document.getElementById('btnCancelCrop').style.display = 'none';
 
-      setObjectsInteractive(true);
       canvas.renderAll();
     }
 
@@ -1282,8 +1324,6 @@
       let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
-        if (obj === cropOverlay) return;
-
         const item = document.createElement('div');
         const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
 
