@@ -406,10 +406,11 @@
     let activePathLine = null;
     let clipboard = null;
 
-    // VARIÁVEIS PARA RECORTE DIRETO DO OBJETO
+    // VARIÁVEIS PARA RECORTE ASSIMÉTRICO UNILATERAL
     let isCropMode = false;
     let targetCropObj = null;
-    let cropLimits = { left: 0, top: 0, width: 0, height: 0, scaleX: 1, scaleY: 1 };
+    let cropLimits = null;
+    let activeTransformControl = null;
 
     // LÓGICA DE UNDO
     const undoStack = [];
@@ -547,7 +548,7 @@
     }
 
     // -------------------------------------------------------------
-    // RECORTE NATIVO DIRETO NO PRÓPRIO OBJETO SELECIONADO
+    // RECORTE UNILATERAL (SÓ O LADO QUE É PUXADO É OCULTADO)
     // -------------------------------------------------------------
     function startWordStyleCrop() {
       const activeObj = canvas.getActiveObject();
@@ -559,21 +560,31 @@
       isCropMode = true;
       targetCropObj = activeObj;
 
-      // Guarda as dimensões exatas iniciais para calcular as proporções de corte
+      // Altera a origem para 'left' / 'top' para desativar a simetria central durante o corte
+      const bound = targetCropObj.getBoundingRect();
+
       cropLimits = {
-        left: targetCropObj.left,
-        top: targetCropObj.top,
-        width: targetCropObj.width,
-        height: targetCropObj.height,
+        left: bound.left,
+        top: bound.top,
+        width: bound.width,
+        height: bound.height,
         scaleX: targetCropObj.scaleX,
         scaleY: targetCropObj.scaleY,
         cropX: targetCropObj.cropX || 0,
         cropY: targetCropObj.cropY || 0,
-        clipPath: targetCropObj.clipPath
+        origWidth: targetCropObj.width,
+        origHeight: targetCropObj.height,
+        clipPath: targetCropObj.clipPath,
+        originX: targetCropObj.originX,
+        originY: targetCropObj.originY
       };
 
-      // Transforma os manipuladores do próprio objeto para o estilo Recorte (Pretos com bordo azul)
+      // Muda para manipuladores pretos de recorte
       targetCropObj.set({
+        originX: 'left',
+        originY: 'top',
+        left: bound.left,
+        top: bound.top,
         cornerColor: '#0f172a',
         cornerStrokeColor: '#38bdf8',
         cornerStyle: 'rect',
@@ -583,51 +594,72 @@
         hasRotatingPoint: false
       });
 
+      targetCropObj.setCoords();
       canvas.renderAll();
 
       document.getElementById('btnWordCrop').style.display = 'none';
       document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
       document.getElementById('btnCancelCrop').style.display = 'inline-flex';
 
-      showStatus('✂️ Puxa os manipuladores do próprio objeto para recortar.');
+      showStatus('✂️ Puxa o manipulador do lado pretendido para recortar apenas essa margem.');
     }
 
-    // Interceta o movimento das bordas e converte em corte direto em vez de esticar
+    // Identifica qual o manipulador específico que está a ser arrastado
+    canvas.on('before:transform', function (opt) {
+      if (isCropMode && opt.transform) {
+        activeTransformControl = opt.transform.corner;
+      }
+    });
+
+    // Processa o recorte estritamente no lado que o utilizador arrasta
     canvas.on('object:scaling', function (e) {
       if (!isCropMode || e.target !== targetCropObj) return;
 
       const obj = e.target;
+      const corner = activeTransformControl;
 
-      // Se for uma imagem pura ou SVG importado
       if (obj.type === 'image') {
-        const currentW = obj.width * obj.scaleX;
-        const currentH = obj.height * obj.scaleY;
+        const currentScaleX = cropLimits.scaleX;
+        const currentScaleY = cropLimits.scaleY;
 
-        const origW = cropLimits.width * cropLimits.scaleX;
-        const origH = cropLimits.height * cropLimits.scaleY;
+        const deltaW = (obj.width * obj.scaleX) - (cropLimits.width);
+        const deltaH = (obj.height * obj.scaleY) - (cropLimits.height);
 
-        // Mantém a escala fixa e ajusta a caixa de recorte (cropX/cropY)
-        const diffW = (origW - currentW) / cropLimits.scaleX;
-        const diffH = (origH - currentH) / cropLimits.scaleY;
-
-        obj.set({
-          width: currentW / cropLimits.scaleX,
-          height: currentH / cropLimits.scaleY,
-          scaleX: cropLimits.scaleX,
-          scaleY: cropLimits.scaleY
-        });
+        // Se estiver a arrastar o manipulador da DIREITA (mr)
+        if (corner === 'mr') {
+          obj.width = Math.max(10, cropLimits.origWidth + (deltaW / currentScaleX));
+          obj.scaleX = currentScaleX;
+        } 
+        // Se estiver a arrastar o manipulador da ESQUERDA (ml)
+        else if (corner === 'ml') {
+          const shiftX = (obj.left - cropLimits.left);
+          obj.cropX = cropLimits.cropX + (shiftX / currentScaleX);
+          obj.width = Math.max(10, cropLimits.origWidth - (shiftX / currentScaleX));
+          obj.scaleX = currentScaleX;
+        }
+        // Se estiver a arrastar o manipulador de BAIXO (mb)
+        else if (corner === 'mb') {
+          obj.height = Math.max(10, cropLimits.origHeight + (deltaH / currentScaleY));
+          obj.scaleY = currentScaleY;
+        }
+        // Se estiver a arrastar o manipulador do TOPO (mt)
+        else if (corner === 'mt') {
+          const shiftY = (obj.top - cropLimits.top);
+          obj.cropY = cropLimits.cropY + (shiftY / currentScaleY);
+          obj.height = Math.max(10, cropLimits.origHeight - (shiftY / currentScaleY));
+          obj.scaleY = currentScaleY;
+        }
       } else {
-        // Para formas e caminhos vetoriais, aplica a janela de corte clipPath
-        const clipPath = new fabric.Rect({
+        // Para formas/símbolos vetoriais aplica a máscara ajustada à margem movida
+        const clipRect = new fabric.Rect({
           left: 0,
           top: 0,
           width: obj.width * obj.scaleX,
           height: obj.height * obj.scaleY,
-          originX: 'center',
-          originY: 'center'
+          originX: 'left',
+          originY: 'top'
         });
-
-        obj.set({ clipPath: clipPath });
+        obj.set({ clipPath: clipRect });
       }
 
       canvas.renderAll();
@@ -636,8 +668,14 @@
     function confirmWordCrop() {
       if (!targetCropObj) return;
 
-      // Restaura o aspeto normal verde/turquesa dos manipuladores de seleção
+      // Restaura a origem padrão para rotação/redimensionamento normal
+      const centerPos = targetCropObj.getCenterPoint();
+
       targetCropObj.set({
+        originX: cropLimits.originX || 'center',
+        originY: cropLimits.originY || 'center',
+        left: centerPos.x,
+        top: centerPos.y,
         cornerColor: '#0d9488',
         cornerStyle: 'circle',
         cornerSize: 12,
@@ -645,9 +683,10 @@
         lockRotation: false
       });
 
+      targetCropObj.setCoords();
       resetCropUI();
       saveState();
-      showStatus('✅ Recorte do objeto confirmado!');
+      showStatus('✅ Recorte unilateral efetuado com sucesso!');
     }
 
     function cancelWordCrop() {
@@ -657,11 +696,13 @@
           scaleY: cropLimits.scaleY,
           left: cropLimits.left,
           top: cropLimits.top,
-          width: cropLimits.width,
-          height: cropLimits.height,
+          width: cropLimits.origWidth,
+          height: cropLimits.origHeight,
           cropX: cropLimits.cropX,
           cropY: cropLimits.cropY,
           clipPath: cropLimits.clipPath,
+          originX: cropLimits.originX || 'center',
+          originY: cropLimits.originY || 'center',
           cornerColor: '#0d9488',
           cornerStyle: 'circle',
           lockRotation: false
@@ -675,6 +716,8 @@
     function resetCropUI() {
       isCropMode = false;
       targetCropObj = null;
+      cropLimits = null;
+      activeTransformControl = null;
 
       document.getElementById('btnWordCrop').style.display = 'inline-flex';
       document.getElementById('btnConfirmCrop').style.display = 'none';
