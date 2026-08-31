@@ -219,10 +219,6 @@
       flex: 1;
     }
 
-    .layer-item .layer-info span {
-      cursor: text;
-    }
-
     .layer-item .layer-actions {
       display: flex;
       align-items: center;
@@ -273,7 +269,7 @@
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
     
-    <!-- Ferramenta de Recorte Estilo Word -->
+    <!-- Recorte Nativo Direto estilo Word -->
     <div class="crop-subtools">
       <button id="btnWordCrop" onclick="startWordStyleCrop()" style="background-color: #0284c7; border-color: #38bdf8;">✂️ Recortar (Estilo Word)</button>
       <button id="btnConfirmCrop" onclick="confirmWordCrop()" style="display:none; background-color: #16a34a; border-color: #22c55e;">✅ Confirmar</button>
@@ -410,9 +406,10 @@
     let activePathLine = null;
     let clipboard = null;
 
-    // VARIÁVEIS PARA RECORTE DIRETO NO OBJETO (MÁSCARA VETORIAL PURA)
+    // VARIÁVEIS PARA RECORTE DIRETO DO OBJETO
+    let isCropMode = false;
     let targetCropObj = null;
-    let cropOverlayRect = null;
+    let cropLimits = { left: 0, top: 0, width: 0, height: 0, scaleX: 1, scaleY: 1 };
 
     // LÓGICA DE UNDO
     const undoStack = [];
@@ -420,7 +417,7 @@
     const MAX_UNDO_LEVELS = 25;
 
     function saveState() {
-      if (isBatchUpdating || isUndoRedoOperation) return;
+      if (isBatchUpdating || isUndoRedoOperation || isCropMode) return;
       
       const jsonState = JSON.stringify(canvas.toJSON(['rawSVGData', 'customName']));
       undoStack.push(jsonState);
@@ -431,6 +428,8 @@
     }
 
     function undo() {
+      if (isCropMode) cancelWordCrop();
+
       if (undoStack.length <= 1) {
         showStatus('⚠️ Sem mais ações para desfazer.');
         return;
@@ -507,6 +506,8 @@
     }
 
     function setActiveTool(tool) {
+      if (isCropMode && tool !== 'select') cancelWordCrop();
+
       currentTool = tool;
       document.querySelectorAll('.toolbar button').forEach(btn => btn.classList.remove('active'));
 
@@ -539,16 +540,14 @@
 
     function setObjectsInteractive(enable) {
       canvas.forEachObject(function (obj) {
-        if (obj !== cropOverlayRect) {
-          obj.selectable = enable;
-          obj.evented = enable;
-        }
+        obj.selectable = enable;
+        obj.evented = enable;
       });
       canvas.renderAll();
     }
 
     // -------------------------------------------------------------
-    // RECORTE VETORIAL EXCLUSIVO DO OBJETO SELECIONADO (MÁSCARA CLIPPATH)
+    // RECORTE NATIVO DIRETO NO PRÓPRIO OBJETO SELECIONADO
     // -------------------------------------------------------------
     function startWordStyleCrop() {
       const activeObj = canvas.getActiveObject();
@@ -557,104 +556,131 @@
         return;
       }
 
+      isCropMode = true;
       targetCropObj = activeObj;
-      const bound = targetCropObj.getBoundingRect();
 
-      // Caixa de ajuste sobreposta alinhada perfeitamente com o objeto
-      cropOverlayRect = new fabric.Rect({
-        left: bound.left,
-        top: bound.top,
-        width: bound.width,
-        height: bound.height,
-        fill: 'rgba(56, 189, 248, 0.15)',
-        stroke: '#0284c7',
-        strokeWidth: 2,
-        strokeDashArray: [4, 4],
-        cornerColor: '#0284c7',
+      // Guarda as dimensões exatas iniciais para calcular as proporções de corte
+      cropLimits = {
+        left: targetCropObj.left,
+        top: targetCropObj.top,
+        width: targetCropObj.width,
+        height: targetCropObj.height,
+        scaleX: targetCropObj.scaleX,
+        scaleY: targetCropObj.scaleY,
+        cropX: targetCropObj.cropX || 0,
+        cropY: targetCropObj.cropY || 0,
+        clipPath: targetCropObj.clipPath
+      };
+
+      // Transforma os manipuladores do próprio objeto para o estilo Recorte (Pretos com bordo azul)
+      targetCropObj.set({
+        cornerColor: '#0f172a',
+        cornerStrokeColor: '#38bdf8',
         cornerStyle: 'rect',
         cornerSize: 10,
         transparentCorners: false,
+        lockRotation: true,
         hasRotatingPoint: false
       });
 
-      setObjectsInteractive(false);
-      canvas.add(cropOverlayRect);
-      canvas.setActiveObject(cropOverlayRect);
       canvas.renderAll();
 
       document.getElementById('btnWordCrop').style.display = 'none';
       document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
       document.getElementById('btnCancelCrop').style.display = 'inline-flex';
 
-      showStatus('✂️ Redimensiona a caixa azul sobre o objeto e clica em Confirmar.');
+      showStatus('✂️ Puxa os manipuladores do próprio objeto para recortar.');
     }
 
-    function confirmWordCrop() {
-      if (!targetCropObj || !cropOverlayRect) return;
+    // Interceta o movimento das bordas e converte em corte direto em vez de esticar
+    canvas.on('object:scaling', function (e) {
+      if (!isCropMode || e.target !== targetCropObj) return;
 
-      const cropBound = cropOverlayRect.getBoundingRect();
+      const obj = e.target;
 
-      // Recorte por cálculo de coordenadas locais do próprio objeto (sem o fundo da tela)
-      const objWidth = targetCropObj.getScaledWidth();
-      const objHeight = targetCropObj.getScaledHeight();
+      // Se for uma imagem pura ou SVG importado
+      if (obj.type === 'image') {
+        const currentW = obj.width * obj.scaleX;
+        const currentH = obj.height * obj.scaleY;
 
-      // Calcula o deslocamento da caixa em relação ao centro do objeto
-      const objCenter = targetCropObj.getCenterPoint();
-      const cropCenter = cropOverlayRect.getCenterPoint();
+        const origW = cropLimits.width * cropLimits.scaleX;
+        const origH = cropLimits.height * cropLimits.scaleY;
 
-      const clipWidth = cropOverlayRect.getScaledWidth();
-      const clipHeight = cropOverlayRect.getScaledHeight();
+        // Mantém a escala fixa e ajusta a caixa de recorte (cropX/cropY)
+        const diffW = (origW - currentW) / cropLimits.scaleX;
+        const diffH = (origH - currentH) / cropLimits.scaleY;
 
-      const clipLeft = (cropCenter.x - objCenter.x) / targetCropObj.scaleX;
-      const clipTop = (cropCenter.y - objCenter.y) / targetCropObj.scaleY;
+        obj.set({
+          width: currentW / cropLimits.scaleX,
+          height: currentH / cropLimits.scaleY,
+          scaleX: cropLimits.scaleX,
+          scaleY: cropLimits.scaleY
+        });
+      } else {
+        // Para formas e caminhos vetoriais, aplica a janela de corte clipPath
+        const clipPath = new fabric.Rect({
+          left: 0,
+          top: 0,
+          width: obj.width * obj.scaleX,
+          height: obj.height * obj.scaleY,
+          originX: 'center',
+          originY: 'center'
+        });
 
-      // Aplica uma máscara local diretamente sobre o objeto isolado
-      const clipPath = new fabric.Rect({
-        left: clipLeft,
-        top: clipTop,
-        width: clipWidth / targetCropObj.scaleX,
-        height: clipHeight / targetCropObj.scaleY,
-        originX: 'center',
-        originY: 'center',
-        absolutePositioned: false
-      });
+        obj.set({ clipPath: clipPath });
+      }
 
-      targetCropObj.set({
-        clipPath: clipPath
-      });
-
-      // Recalcula caixa de seleção exata do novo recorte
-      targetCropObj.setCoords();
-
-      canvas.remove(cropOverlayRect);
-      cropOverlayRect = null;
-
-      cancelWordCropState();
-      setActiveTool('select');
-      canvas.setActiveObject(targetCropObj);
       canvas.renderAll();
+    });
 
-      updateLayerPanel();
+    function confirmWordCrop() {
+      if (!targetCropObj) return;
+
+      // Restaura o aspeto normal verde/turquesa dos manipuladores de seleção
+      targetCropObj.set({
+        cornerColor: '#0d9488',
+        cornerStyle: 'circle',
+        cornerSize: 12,
+        transparentCorners: false,
+        lockRotation: false
+      });
+
+      resetCropUI();
       saveState();
-      showStatus('✅ Objeto recortado com sucesso!');
+      showStatus('✅ Recorte do objeto confirmado!');
     }
 
     function cancelWordCrop() {
-      cancelWordCropState();
-      setActiveTool('select');
+      if (targetCropObj && cropLimits) {
+        targetCropObj.set({
+          scaleX: cropLimits.scaleX,
+          scaleY: cropLimits.scaleY,
+          left: cropLimits.left,
+          top: cropLimits.top,
+          width: cropLimits.width,
+          height: cropLimits.height,
+          cropX: cropLimits.cropX,
+          cropY: cropLimits.cropY,
+          clipPath: cropLimits.clipPath,
+          cornerColor: '#0d9488',
+          cornerStyle: 'circle',
+          lockRotation: false
+        });
+      }
+
+      resetCropUI();
       showStatus('❌ Recorte cancelado.');
     }
 
-    function cancelWordCropState() {
-      if (cropOverlayRect) canvas.remove(cropOverlayRect);
+    function resetCropUI() {
+      isCropMode = false;
       targetCropObj = null;
-      cropOverlayRect = null;
 
       document.getElementById('btnWordCrop').style.display = 'inline-flex';
       document.getElementById('btnConfirmCrop').style.display = 'none';
       document.getElementById('btnCancelCrop').style.display = 'none';
 
-      setObjectsInteractive(true);
+      canvas.renderAll();
     }
 
     function prepareSVGWithStyles(svgString) {
@@ -906,7 +932,9 @@
     }
 
     canvas.on('mouse:dblclick', function () {
-      if (currentTool === 'path') {
+      if (isCropMode) {
+        confirmWordCrop();
+      } else if (currentTool === 'path') {
         finishPath();
       }
     });
@@ -1243,7 +1271,7 @@
     canvas.on('object:modified', saveState);
 
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS COM RENOMEAÇÃO DIRETA (DUPLO CLIQUE OU BOTAO)
+    // PAINEL DE CAMADAS COM RENOMEAÇÃO DIRETA
     // -------------------------------------------------------------
     function updateLayerPanel() {
       if (isBatchUpdating) return;
@@ -1262,8 +1290,6 @@
       let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
-        if (obj === cropOverlayRect) return;
-
         const item = document.createElement('div');
         const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
 
