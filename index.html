@@ -406,11 +406,10 @@
     let activePathLine = null;
     let clipboard = null;
 
-    // RECORTE ESTÁVEL E NATIVO ESTILO WORD
+    // VARIÁVEIS PARA RECORTE NATIVO DIRETO
     let isCropMode = false;
     let targetCropObj = null;
-    let cropOriginalProps = null;
-    let activeCorner = null;
+    let cropOverlay = null;
 
     // LÓGICA DE UNDO
     const undoStack = [];
@@ -541,14 +540,16 @@
 
     function setObjectsInteractive(enable) {
       canvas.forEachObject(function (obj) {
-        obj.selectable = enable;
-        obj.evented = enable;
+        if (obj !== cropOverlay) {
+          obj.selectable = enable;
+          obj.evented = enable;
+        }
       });
       canvas.renderAll();
     }
 
     // -------------------------------------------------------------
-    // RECORTE UNILATERAL ESTÁVEL COM MÁSCARA INTERNA EM TEMPO REAL
+    // RECORTE UNILATERAL PERFEITO (MOLDURA DE RECORTE ALINHADA NOS 8 LADOS)
     // -------------------------------------------------------------
     function startWordStyleCrop() {
       const activeObj = canvas.getActiveObject();
@@ -560,152 +561,117 @@
       isCropMode = true;
       targetCropObj = activeObj;
 
-      // Guarda as propriedades originais completas para poder desfazer se necessário
-      cropOriginalProps = {
-        left: targetCropObj.left,
-        top: targetCropObj.top,
-        width: targetCropObj.width,
-        height: targetCropObj.height,
-        scaleX: targetCropObj.scaleX,
-        scaleY: targetCropObj.scaleY,
-        clipPath: targetCropObj.clipPath,
-        cropX: targetCropObj.cropX || 0,
-        cropY: targetCropObj.cropY || 0
-      };
+      // Desativa interação temporária no objeto original
+      targetCropObj.selectable = false;
+      targetCropObj.evented = false;
 
-      // Inicializa ou reaproveita o clipPath de recorte
-      if (!targetCropObj.cropBox) {
-        targetCropObj.cropBox = {
-          left: 0,
-          top: 0,
-          width: targetCropObj.width,
-          height: targetCropObj.height
-        };
-      }
+      const bound = targetCropObj.getBoundingRect();
 
-      // Muda para manipuladores pretos de recorte tipo Word
-      targetCropObj.set({
+      // Cria a caixa de recorte exatamente em cima do objeto original
+      cropOverlay = new fabric.Rect({
+        left: bound.left,
+        top: bound.top,
+        width: bound.width,
+        height: bound.height,
+        fill: 'transparent',
+        stroke: '#0f172a',
+        strokeWidth: 2,
+        strokeDashArray: [4, 4],
         cornerColor: '#0f172a',
         cornerStrokeColor: '#38bdf8',
         cornerStyle: 'rect',
         cornerSize: 10,
         transparentCorners: false,
-        lockRotation: true,
         hasRotatingPoint: false
       });
 
+      canvas.add(cropOverlay);
+      canvas.setActiveObject(cropOverlay);
       canvas.renderAll();
 
       document.getElementById('btnWordCrop').style.display = 'none';
       document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
       document.getElementById('btnCancelCrop').style.display = 'inline-flex';
 
-      showStatus('✂️ Puxa o lado pretendido para recortar essa margem.');
+      showStatus('✂️ Puxa qualquer um dos 8 manipuladores para recortar essa margem.');
     }
 
-    canvas.on('before:transform', function (opt) {
-      if (isCropMode && opt.transform) {
-        activeCorner = opt.transform.corner;
-      }
-    });
+    function confirmWordCrop() {
+      if (!targetCropObj || !cropOverlay) return;
 
-    // Ajusta o recorte sem alterar a escala base nem fazer desaparecer o objeto
-    canvas.on('object:scaling', function (e) {
-      if (!isCropMode || e.target !== targetCropObj) return;
+      const cropBound = cropOverlay.getBoundingRect();
+      const objBound = targetCropObj.getBoundingRect();
 
-      const obj = e.target;
-      const corner = activeCorner;
+      // Calcula as coordenadas exatas do corte
+      const relLeft = Math.max(0, cropBound.left - objBound.left);
+      const relTop = Math.max(0, cropBound.top - objBound.top);
+      const relWidth = Math.min(objBound.width - relLeft, cropBound.width);
+      const relHeight = Math.min(objBound.height - relTop, cropBound.height);
 
-      const currentWidth = obj.width * obj.scaleX;
-      const currentHeight = obj.height * obj.scaleY;
+      if (targetCropObj.type === 'image') {
+        const sX = targetCropObj.scaleX;
+        const sY = targetCropObj.scaleY;
 
-      // Mantém a escala travada no valor inicial para o efeito ser corte e não deformação
-      obj.scaleX = cropOriginalProps.scaleX;
-      obj.scaleY = cropOriginalProps.scaleY;
-
-      const baseW = cropOriginalProps.width;
-      const baseH = cropOriginalProps.height;
-
-      // Se for imagem direta
-      if (obj.type === 'image') {
-        if (corner === 'mr') { // Direita
-          obj.width = Math.max(10, currentWidth / cropOriginalProps.scaleX);
-        } else if (corner === 'ml') { // Esquerda
-          const diffW = baseW - (currentWidth / cropOriginalProps.scaleX);
-          obj.cropX = Math.max(0, cropOriginalProps.cropX + diffW);
-          obj.width = Math.max(10, baseW - diffW);
-        } else if (corner === 'mb') { // Baixo
-          obj.height = Math.max(10, currentHeight / cropOriginalProps.scaleY);
-        } else if (corner === 'mt') { // Topo
-          const diffH = baseH - (currentHeight / cropOriginalProps.scaleY);
-          obj.cropY = Math.max(0, cropOriginalProps.cropY + diffH);
-          obj.height = Math.max(10, baseH - diffH);
-        }
+        targetCropObj.set({
+          cropX: (targetCropObj.cropX || 0) + (relLeft / sX),
+          cropY: (targetCropObj.cropY || 0) + (relTop / sY),
+          width: relWidth / sX,
+          height: relHeight / sY,
+          left: cropBound.left + (relWidth / 2),
+          top: cropBound.top + (relHeight / 2),
+          originX: 'center',
+          originY: 'center'
+        });
       } else {
-        // Para formas e grupos vetoriais aplica a máscara de margem unilateral
-        const mask = new fabric.Rect({
-          left: -obj.width / 2,
-          top: -obj.height / 2,
-          width: currentWidth / cropOriginalProps.scaleX,
-          height: currentHeight / cropOriginalProps.scaleY,
+        // Máscara universal para símbolos e formas vetoriais
+        const clipRect = new fabric.Rect({
+          left: (cropBound.left - objBound.left - objBound.width / 2) / targetCropObj.scaleX,
+          top: (cropBound.top - objBound.top - objBound.height / 2) / targetCropObj.scaleY,
+          width: relWidth / targetCropObj.scaleX,
+          height: relHeight / targetCropObj.scaleY,
           originX: 'left',
           originY: 'top'
         });
-        obj.set({ clipPath: mask });
+
+        targetCropObj.set({ clipPath: clipRect });
       }
 
-      obj.setCoords();
-      canvas.renderAll();
-    });
+      targetCropObj.setCoords();
 
-    function confirmWordCrop() {
-      if (!targetCropObj) return;
+      canvas.remove(cropOverlay);
+      cropOverlay = null;
 
-      targetCropObj.set({
-        cornerColor: '#0d9488',
-        cornerStyle: 'circle',
-        cornerSize: 12,
-        transparentCorners: false,
-        lockRotation: false
-      });
-
+      const objToSelect = targetCropObj;
       resetCropUI();
+
+      setActiveTool('select');
+      canvas.setActiveObject(objToSelect);
+      canvas.renderAll();
+
       saveState();
-      showStatus('✅ Recorte confirmado com sucesso!');
+      showStatus('✅ Recorte efetuado com sucesso!');
     }
 
     function cancelWordCrop() {
-      if (targetCropObj && cropOriginalProps) {
-        targetCropObj.set({
-          scaleX: cropOriginalProps.scaleX,
-          scaleY: cropOriginalProps.scaleY,
-          left: cropOriginalProps.left,
-          top: cropOriginalProps.top,
-          width: cropOriginalProps.width,
-          height: cropOriginalProps.height,
-          cropX: cropOriginalProps.cropX,
-          cropY: cropOriginalProps.cropY,
-          clipPath: cropOriginalProps.clipPath,
-          cornerColor: '#0d9488',
-          cornerStyle: 'circle',
-          lockRotation: false
-        });
-      }
-
+      if (cropOverlay) canvas.remove(cropOverlay);
       resetCropUI();
       showStatus('❌ Recorte cancelado.');
     }
 
     function resetCropUI() {
       isCropMode = false;
+      if (targetCropObj) {
+        targetCropObj.selectable = true;
+        targetCropObj.evented = true;
+      }
       targetCropObj = null;
-      cropOriginalProps = null;
-      activeCorner = null;
+      cropOverlay = null;
 
       document.getElementById('btnWordCrop').style.display = 'inline-flex';
       document.getElementById('btnConfirmCrop').style.display = 'none';
       document.getElementById('btnCancelCrop').style.display = 'none';
 
+      setObjectsInteractive(true);
       canvas.renderAll();
     }
 
@@ -1316,6 +1282,8 @@
       let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
+        if (obj === cropOverlay) return;
+
         const item = document.createElement('div');
         const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
 
