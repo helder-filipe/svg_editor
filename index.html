@@ -82,7 +82,7 @@
       margin: 0 2px;
     }
 
-    .pen-subtools {
+    .pen-subtools, .crop-subtools {
       display: inline-flex;
       gap: 4px;
       background-color: #0f172a;
@@ -216,6 +216,11 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    .layer-item .layer-info span {
+      cursor: text;
     }
 
     .layer-item .layer-actions {
@@ -267,6 +272,13 @@
 
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
+    
+    <!-- Ferramenta de Recorte Estilo Word -->
+    <div class="crop-subtools">
+      <button id="btnWordCrop" onclick="startWordStyleCrop()" style="background-color: #0284c7; border-color: #38bdf8;">✂️ Recortar (Estilo Word)</button>
+      <button id="btnConfirmCrop" onclick="confirmWordCrop()" style="display:none; background-color: #16a34a; border-color: #22c55e;">✅ Confirmar</button>
+      <button id="btnCancelCrop" onclick="cancelWordCrop()" style="display:none; background-color: #ef4444; border-color: #f87171;">❌ Cancelar</button>
+    </div>
 
     <div class="pen-subtools">
       <button id="btnPath" onclick="setActiveTool('path')">📐 Pen</button>
@@ -317,11 +329,19 @@
     <input type="color" id="fillColor" value="#0d9488" onchange="updateColor(this.value)">
 
     <button onclick="ungroupSelected()" style="background-color: #0284c7; border-color: #38bdf8;">🔓 Desagrupar Avançado</button>
-    
+
+    <div class="separator"></div>
+
+    <!-- Guardar / Carregar na Cache Local -->
+    <button onclick="saveToStorage()" style="background-color: #8b5cf6; border-color: #a78bfa;" title="Guardar no Browser (Ctrl+S)">💾 Guardar na Cache</button>
+    <button onclick="loadFromStorage()" style="background-color: #6366f1; border-color: #818cf8;" title="Carregar do Browser">📂 Carregar da Cache</button>
+
+    <div class="separator"></div>
+
     <!-- Operações Edição & Histórico -->
     <button onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
-    <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">✂️ Cortar</button>
-    <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📋 Copiar</button>
+    <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">📋 Cortar</button>
+    <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📄 Copiar</button>
     <button onclick="pasteSelected()" title="Colar Camada (Ctrl+V)">📌 Colar</button>
     <button onclick="deleteSelected()" style="background-color: #ef4444; border-color: #f87171;">🗑️ Eliminar</button>
 
@@ -390,7 +410,11 @@
     let activePathLine = null;
     let clipboard = null;
 
-    // --- LÓGICA DE UNDO (HISTÓRICO) ---
+    // VARIÁVEIS PARA RECORTE DIRETO NO OBJETO (MÁSCARA VETORIAL PURA)
+    let targetCropObj = null;
+    let cropOverlayRect = null;
+
+    // LÓGICA DE UNDO
     const undoStack = [];
     let isUndoRedoOperation = false;
     const MAX_UNDO_LEVELS = 25;
@@ -413,7 +437,7 @@
       }
 
       isUndoRedoOperation = true;
-      undoStack.pop(); // Remove o estado atual
+      undoStack.pop();
       const previousState = undoStack[undoStack.length - 1];
 
       canvas.loadFromJSON(previousState, function () {
@@ -421,6 +445,38 @@
         updateLayerPanel();
         isUndoRedoOperation = false;
         showStatus('↩️ Ação desfeita!');
+      });
+    }
+
+    // GESTÃO DA CACHE LOCAL
+    function saveToStorage() {
+      try {
+        const jsonState = JSON.stringify(canvas.toJSON(['rawSVGData', 'customName']));
+        localStorage.setItem('infralobo_canvas_project', jsonState);
+        showStatus('💾 Projeto guardado na cache do browser com sucesso!');
+      } catch (e) {
+        showStatus('⚠️ O mapa é demasiado grande para a memória local do browser.');
+      }
+    }
+
+    function loadFromStorage() {
+      const savedData = localStorage.getItem('infralobo_canvas_project');
+      if (!savedData) {
+        showStatus('⚠️ Nenhuns dados guardados na cache.');
+        return;
+      }
+
+      showStatus('⏳ A carregar projeto da cache...');
+      isUndoRedoOperation = true;
+
+      canvas.loadFromJSON(savedData, function () {
+        canvas.renderAll();
+        updateLayerPanel();
+        updateZoomIndicator();
+        undoStack.length = 0;
+        saveState();
+        isUndoRedoOperation = false;
+        showStatus('📂 Projeto restaurado da cache!');
       });
     }
 
@@ -483,10 +539,122 @@
 
     function setObjectsInteractive(enable) {
       canvas.forEachObject(function (obj) {
-        obj.selectable = enable;
-        obj.evented = enable;
+        if (obj !== cropOverlayRect) {
+          obj.selectable = enable;
+          obj.evented = enable;
+        }
       });
       canvas.renderAll();
+    }
+
+    // -------------------------------------------------------------
+    // RECORTE VETORIAL EXCLUSIVO DO OBJETO SELECIONADO (MÁSCARA CLIPPATH)
+    // -------------------------------------------------------------
+    function startWordStyleCrop() {
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) {
+        showStatus('⚠️ Seleciona primeiro o objeto que queres recortar.');
+        return;
+      }
+
+      targetCropObj = activeObj;
+      const bound = targetCropObj.getBoundingRect();
+
+      // Caixa de ajuste sobreposta alinhada perfeitamente com o objeto
+      cropOverlayRect = new fabric.Rect({
+        left: bound.left,
+        top: bound.top,
+        width: bound.width,
+        height: bound.height,
+        fill: 'rgba(56, 189, 248, 0.15)',
+        stroke: '#0284c7',
+        strokeWidth: 2,
+        strokeDashArray: [4, 4],
+        cornerColor: '#0284c7',
+        cornerStyle: 'rect',
+        cornerSize: 10,
+        transparentCorners: false,
+        hasRotatingPoint: false
+      });
+
+      setObjectsInteractive(false);
+      canvas.add(cropOverlayRect);
+      canvas.setActiveObject(cropOverlayRect);
+      canvas.renderAll();
+
+      document.getElementById('btnWordCrop').style.display = 'none';
+      document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
+      document.getElementById('btnCancelCrop').style.display = 'inline-flex';
+
+      showStatus('✂️ Redimensiona a caixa azul sobre o objeto e clica em Confirmar.');
+    }
+
+    function confirmWordCrop() {
+      if (!targetCropObj || !cropOverlayRect) return;
+
+      const cropBound = cropOverlayRect.getBoundingRect();
+
+      // Recorte por cálculo de coordenadas locais do próprio objeto (sem o fundo da tela)
+      const objWidth = targetCropObj.getScaledWidth();
+      const objHeight = targetCropObj.getScaledHeight();
+
+      // Calcula o deslocamento da caixa em relação ao centro do objeto
+      const objCenter = targetCropObj.getCenterPoint();
+      const cropCenter = cropOverlayRect.getCenterPoint();
+
+      const clipWidth = cropOverlayRect.getScaledWidth();
+      const clipHeight = cropOverlayRect.getScaledHeight();
+
+      const clipLeft = (cropCenter.x - objCenter.x) / targetCropObj.scaleX;
+      const clipTop = (cropCenter.y - objCenter.y) / targetCropObj.scaleY;
+
+      // Aplica uma máscara local diretamente sobre o objeto isolado
+      const clipPath = new fabric.Rect({
+        left: clipLeft,
+        top: clipTop,
+        width: clipWidth / targetCropObj.scaleX,
+        height: clipHeight / targetCropObj.scaleY,
+        originX: 'center',
+        originY: 'center',
+        absolutePositioned: false
+      });
+
+      targetCropObj.set({
+        clipPath: clipPath
+      });
+
+      // Recalcula caixa de seleção exata do novo recorte
+      targetCropObj.setCoords();
+
+      canvas.remove(cropOverlayRect);
+      cropOverlayRect = null;
+
+      cancelWordCropState();
+      setActiveTool('select');
+      canvas.setActiveObject(targetCropObj);
+      canvas.renderAll();
+
+      updateLayerPanel();
+      saveState();
+      showStatus('✅ Objeto recortado com sucesso!');
+    }
+
+    function cancelWordCrop() {
+      cancelWordCropState();
+      setActiveTool('select');
+      showStatus('❌ Recorte cancelado.');
+    }
+
+    function cancelWordCropState() {
+      if (cropOverlayRect) canvas.remove(cropOverlayRect);
+      targetCropObj = null;
+      cropOverlayRect = null;
+
+      document.getElementById('btnWordCrop').style.display = 'inline-flex';
+      document.getElementById('btnConfirmCrop').style.display = 'none';
+      document.getElementById('btnCancelCrop').style.display = 'none';
+
+      setObjectsInteractive(true);
     }
 
     function prepareSVGWithStyles(svgString) {
@@ -626,7 +794,7 @@
           });
 
           canvas.clear();
-          undoStack.length = 0; // Limpa histórico ao carregar novo mapa
+          undoStack.length = 0;
 
           canvas.add(img);
           canvas.setActiveObject(img);
@@ -635,7 +803,7 @@
           setActiveTool('select');
           updateLayerPanel();
           updateZoomIndicator();
-          saveState(); // Salva estado inicial
+          saveState();
           showStatus('✅ Mapa e cores carregados com precisão!');
         });
       };
@@ -649,6 +817,10 @@
         canvas.defaultCursor = 'grabbing';
         handLastX = opt.e.clientX;
         handLastY = opt.e.clientY;
+      } else if (currentTool === 'path') {
+        const pointer = canvas.getPointer(opt.e);
+        pathPoints.push({ x: pointer.x, y: pointer.y });
+        drawPolylinePath(false);
       }
     });
 
@@ -668,14 +840,6 @@
       if (currentTool === 'hand') {
         isHandDragging = false;
         canvas.defaultCursor = 'grab';
-      }
-    });
-
-    canvas.on('mouse:down', function (opt) {
-      if (currentTool === 'path') {
-        const pointer = canvas.getPointer(opt.e);
-        pathPoints.push({ x: pointer.x, y: pointer.y });
-        drawPolylinePath(false);
       }
     });
 
@@ -1046,13 +1210,16 @@
       }
     }
 
-    // Atalhos globais de teclado (Undo, Copiar, Recortar, Colar e Apagar)
+    // Atalhos de teclado
     window.addEventListener('keydown', function (e) {
       if (['input', 'textarea', 'select'].includes(e.target.tagName.toLowerCase())) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         e.preventDefault();
         undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveToStorage();
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         e.preventDefault();
         copySelected();
@@ -1073,11 +1240,10 @@
       }
     });
 
-    // Registar modificações de objetos para o histórico
     canvas.on('object:modified', saveState);
 
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS COM EDICAO DE NOMES E AUTO-SCROLL
+    // PAINEL DE CAMADAS COM RENOMEAÇÃO DIRETA (DUPLO CLIQUE OU BOTAO)
     // -------------------------------------------------------------
     function updateLayerPanel() {
       if (isBatchUpdating) return;
@@ -1096,6 +1262,8 @@
       let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
+        if (obj === cropOverlayRect) return;
+
         const item = document.createElement('div');
         const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
 
@@ -1126,7 +1294,7 @@
 
         item.innerHTML = `
           <div class="layer-info">
-            <span title="${name}">${name}</span>
+            <span title="Duplo clique para renomear" ondblclick="renameLayer(event, ${realIndex})">${name}</span>
           </div>
           <div class="layer-actions">
             <button class="btn-icon" title="Renomear Camada" onclick="renameLayer(event, ${realIndex})">✏️</button>
@@ -1165,12 +1333,12 @@
       const obj = objects[realIndex];
       if (obj) {
         const currentName = obj.customName || '';
-        const newName = prompt('Introduza o nome para esta camada:', currentName);
+        const newName = prompt('Novo nome para esta camada:', currentName);
         if (newName !== null && newName.trim() !== '') {
           obj.customName = newName.trim();
           updateLayerPanel();
           saveState();
-          showStatus('🏷️ Nome da camada atualizado!');
+          showStatus('🏷️ Camada renomeada!');
         }
       }
     }
