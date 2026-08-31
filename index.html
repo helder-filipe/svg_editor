@@ -164,6 +164,7 @@
       gap: 6px;
       overflow-y: auto;
       flex: 1;
+      scroll-behavior: smooth;
     }
 
     .layer-item {
@@ -341,12 +342,9 @@
       preserveObjectStacking: true,
       renderOnAddRemove: false,
       subTargetCheck: false,
-      // Com mapas muito grandes (milhares de sub-camadas), o "retina scaling"
-      // do Fabric.js multiplica a resolução (e a memória) de todos os canvas
-      // internos em ecrãs de alta densidade (Retina/4K/escalas 125-200%),
-      // o que pode esgotar a memória/GPU do browser e fazer camadas
-      // "perderem" a cor. Desligar aqui evita esse consumo extra.
-      enableRetinaScaling: false
+      enableRetinaScaling: false,
+      perPixelTargetFind: true,
+      targetFindTolerance: 3
     });
 
     let currentTool = 'select';
@@ -422,35 +420,22 @@
       canvas.renderAll();
     }
 
-    // -------------------------------------------------------------
-    // PRÉ-PROCESSADOR CSS (INJETA CORES E ESTILOS CSS DIRETAMENTE NOS ELEMENTOS)
-    // Resolve o problema de perda de cores quando há estilos definidos via <style>
-    // ou atributos CSS no SVG original.
-    // -------------------------------------------------------------
     function prepareSVGWithStyles(svgString) {
       try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(svgString, 'image/svg+xml');
 
-        // Verifica se há erro de parsing
         const parserError = doc.querySelector('parsererror');
-        if (parserError) {
-          console.warn('Aviso de parsing SVG, a usar SVG original.');
-          return svgString;
-        }
+        if (parserError) return svgString;
 
         const svgEl = doc.documentElement;
-        if (!svgEl || svgEl.tagName.toLowerCase() !== 'svg') {
-          return svgString;
-        }
+        if (!svgEl || svgEl.tagName.toLowerCase() !== 'svg') return svgString;
 
-        // 1. Extrair todas as regras CSS de <style> dentro do SVG
         const styleElements = svgEl.querySelectorAll('style');
         let cssRules = [];
 
         styleElements.forEach(styleEl => {
           const cssText = styleEl.textContent || '';
-          // Faz parse das regras CSS simples: .className { prop: value; ... }
           const ruleRegex = /([^{}]+)\{([^{}]*)\}/g;
           let match;
           while ((match = ruleRegex.exec(cssText)) !== null) {
@@ -469,9 +454,6 @@
           }
         });
 
-        // 2. Função auxiliar: verifica se o elemento já tem essa propriedade
-        //    definida no atributo style="" inline (esse sim tem prioridade máxima,
-        //    acima de qualquer classe CSS)
         function hasInlineStyleProp(el, prop) {
           const styleAttr = el.getAttribute('style');
           if (!styleAttr) return false;
@@ -479,38 +461,26 @@
           return re.test(styleAttr);
         }
 
-        // 3. Função para aplicar estilos CSS a um elemento
         function applyStyleToElement(el, rules) {
           rules.forEach(rule => {
             const sel = rule.selector;
             let matches = false;
 
             if (sel.startsWith('.')) {
-              // Seletor de classe: .className
               const className = sel.substring(1);
               if (el.getAttribute('class')) {
                 const classes = el.getAttribute('class').trim().split(/\s+/);
-                if (classes.includes(className)) {
-                  matches = true;
-                }
+                if (classes.includes(className)) matches = true;
               }
             } else if (sel.startsWith('#')) {
-              // Seletor de ID: #id
               const id = sel.substring(1);
-              if (el.getAttribute('id') === id) {
-                matches = true;
-              }
+              if (el.getAttribute('id') === id) matches = true;
             } else if (sel === el.tagName.toLowerCase()) {
-              // Seletor de tag
               matches = true;
             }
 
             if (matches) {
               Object.keys(rule.props).forEach(prop => {
-                // As classes CSS têm prioridade sobre atributos de apresentação
-                // (fill="...", stroke="..." soltos no elemento), tal como no
-                // comportamento real do CSS/SVG. Só um style="" inline explícito
-                // é que continua a ganhar à classe.
                 if (!hasInlineStyleProp(el, prop)) {
                   el.setAttribute(prop, rule.props[prop]);
                 }
@@ -519,22 +489,28 @@
           });
         }
 
-        // 4. Aplicar regras CSS a todos os elementos com atributo 'class'
         if (cssRules.length > 0) {
           const allElements = svgEl.querySelectorAll('*');
-          allElements.forEach(el => {
-            applyStyleToElement(el, cssRules);
-          });
-          // Remover os <style> pois já foram aplicados inline
+          allElements.forEach(el => applyStyleToElement(el, cssRules));
           styleElements.forEach(s => s.remove());
         }
 
-        // 5. Serializar de volta para string
+        const XLINK_NS = 'http://www.w3.org/1999/xlink';
+        const hrefElements = svgEl.querySelectorAll('image[href], use[href]');
+        hrefElements.forEach(el => {
+          if (!el.hasAttribute('xlink:href') && !el.getAttributeNS(XLINK_NS, 'href')) {
+            const hrefValue = el.getAttribute('href');
+            if (hrefValue) el.setAttributeNS(XLINK_NS, 'xlink:href', hrefValue);
+          }
+        });
+        if (!svgEl.getAttribute('xmlns:xlink')) {
+          svgEl.setAttribute('xmlns:xlink', XLINK_NS);
+        }
+
         const serializer = new XMLSerializer();
         return serializer.serializeToString(doc);
 
       } catch (err) {
-        console.error('Erro ao pré-processar SVG, a usar original:', err);
         return svgString;
       }
     }
@@ -548,9 +524,6 @@
 
       reader.onload = function (f) {
         const svgString = f.target.result;
-
-        // Pré-processa o SVG para injetar estilos CSS inline nos elementos
-        // Isto garante que as cores não se percam ao carregar no Fabric.js
         const processedSVG = prepareSVGWithStyles(svgString);
 
         const blob = new Blob([processedSVG], { type: 'image/svg+xml;charset=utf-8' });
@@ -579,8 +552,8 @@
             cornerColor: '#0d9488',
             cornerStyle: 'circle',
             transparentCorners: false,
-                  objectCaching: true,
-                  noScaleCache: false
+            objectCaching: true,
+            noScaleCache: false
           });
 
           canvas.add(img);
@@ -596,9 +569,6 @@
       e.target.value = '';
     }
 
-    // -------------------------------------------------------------
-    // FERRAMENTAS PAN E PEN
-    // -------------------------------------------------------------
     canvas.on('mouse:down', function (opt) {
       if (currentTool === 'hand') {
         isHandDragging = true;
@@ -709,9 +679,6 @@
       }
     });
 
-    // -------------------------------------------------------------
-    // SÍMBOLOS E FORMAS
-    // -------------------------------------------------------------
     function addSymbol(type) {
       if (!type) return;
       setActiveTool('select');
@@ -829,9 +796,6 @@
       }
     }
 
-    // -------------------------------------------------------------
-    // DESAGRUPAMENTO OTIMIZADO DE MEIO TERMO (VELOCIDADE + BARRA + CORES)
-    // -------------------------------------------------------------
     async function ungroupSelected() {
       const activeObj = canvas.getActiveObject();
       if (!activeObj) {
@@ -862,7 +826,7 @@
 
           canvas.remove(activeObj);
           const total = objects.length;
-          const chunkSize = 50; // Lote equilibrado para velocidade e fluidez da UI
+          const chunkSize = 50;
 
           for (let i = 0; i < total; i += chunkSize) {
             const chunk = objects.slice(i, i + chunkSize);
@@ -877,11 +841,6 @@
                   cornerColor: '#0d9488',
                   cornerStyle: 'circle',
                   transparentCorners: false,
-                  // Desativa o cache individual por objeto: com milhares de
-                  // sub-camadas, cada uma criaria o seu próprio canvas interno
-                  // de cache, o que pode esgotar a memória/GPU do browser e
-                  // fazer algumas camadas "perderem" a cor (ficam pretas ou
-                  // transparentes) quando o browser descarta caches antigos.
                   objectCaching: false
                 });
                 canvas.add(obj);
@@ -890,7 +849,7 @@
 
             const currentCount = Math.min(i + chunkSize, total);
             updateProgress(currentCount, total, `A importar ${currentCount} de ${total}...`);
-            await new Promise(r => setTimeout(r, 15)); // Pequena pausa que atualiza a barra de progresso sem travar
+            await new Promise(r => setTimeout(r, 15));
           }
 
           isBatchUpdating = false;
@@ -938,7 +897,7 @@
     }
 
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS
+    // PAINEL DE CAMADAS COM AUTO-SCROLL AUTOMÁTICO
     // -------------------------------------------------------------
     function updateLayerPanel() {
       if (isBatchUpdating) return;
@@ -954,6 +913,7 @@
       }
 
       const activeObject = canvas.getActiveObject();
+      let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
         const item = document.createElement('div');
@@ -961,8 +921,10 @@
 
         item.className = 'layer-item' + (isPathObj ? ' is-path' : '');
 
-        if (activeObject === obj || (activeObject && activeObject.type === 'activeSelection' && activeObject.contains && activeObject.contains(obj))) {
+        const isSelected = activeObject === obj || (activeObject && activeObject.type === 'activeSelection' && activeObject.contains && activeObject.contains(obj));
+        if (isSelected) {
           item.classList.add('active');
+          activeItemElement = item;
         }
 
         let name = 'Sub-camada Vetorial';
@@ -1004,6 +966,13 @@
 
         layerList.appendChild(item);
       });
+
+      // Faz scroll automático até à camada ativa para garantir que fica visível na barra lateral
+      if (activeItemElement) {
+        setTimeout(() => {
+          activeItemElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 50);
+      }
     }
 
     function toggleVisibility(e, realIndex) {
