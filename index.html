@@ -91,6 +91,24 @@
       border: 1px solid #334155;
     }
 
+    .zoom-group {
+      display: inline-flex;
+      gap: 3px;
+      background-color: #0f172a;
+      padding: 3px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      align-items: center;
+    }
+
+    .zoom-level-text {
+      font-size: 11px;
+      font-weight: 600;
+      color: #38bdf8;
+      min-width: 42px;
+      text-align: center;
+    }
+
     .app-body {
       display: flex;
       flex: 1;
@@ -299,9 +317,25 @@
     <input type="color" id="fillColor" value="#0d9488" onchange="updateColor(this.value)">
 
     <button onclick="ungroupSelected()" style="background-color: #0284c7; border-color: #38bdf8;">🔓 Desagrupar Avançado</button>
+    
+    <!-- Operações Edição & Histórico -->
+    <button onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
+    <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">✂️ Cortar</button>
+    <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📋 Copiar</button>
+    <button onclick="pasteSelected()" title="Colar Camada (Ctrl+V)">📌 Colar</button>
     <button onclick="deleteSelected()" style="background-color: #ef4444; border-color: #f87171;">🗑️ Eliminar</button>
 
-    <button onclick="resetZoom()">🔍 100%</button>
+    <div class="separator"></div>
+
+    <!-- Controlo e Ferramentas de Zoom -->
+    <div class="zoom-group">
+      <button onclick="stepZoom(-0.25)" title="Afastar (Zoom Out)">➖</button>
+      <span class="zoom-level-text" id="zoomText">100%</span>
+      <button onclick="stepZoom(0.25)" title="Aproximar (Zoom In)">➕</button>
+      <button onclick="resetZoom()" title="Reset Zoom (100%)">🔍 100%</button>
+      <button onclick="zoomToFit()" title="Ajustar Mapa à Tela">🖼️ Centrar</button>
+    </div>
+
     <button onclick="exportSVG()" style="background-color: #16a34a; border-color: #22c55e; margin-left: auto;">💾 Exportar SVG</button>
   </div>
 
@@ -354,6 +388,41 @@
 
     let pathPoints = [];
     let activePathLine = null;
+    let clipboard = null;
+
+    // --- LÓGICA DE UNDO (HISTÓRICO) ---
+    const undoStack = [];
+    let isUndoRedoOperation = false;
+    const MAX_UNDO_LEVELS = 25;
+
+    function saveState() {
+      if (isBatchUpdating || isUndoRedoOperation) return;
+      
+      const jsonState = JSON.stringify(canvas.toJSON(['rawSVGData', 'customName']));
+      undoStack.push(jsonState);
+
+      if (undoStack.length > MAX_UNDO_LEVELS) {
+        undoStack.shift();
+      }
+    }
+
+    function undo() {
+      if (undoStack.length <= 1) {
+        showStatus('⚠️ Sem mais ações para desfazer.');
+        return;
+      }
+
+      isUndoRedoOperation = true;
+      undoStack.pop(); // Remove o estado atual
+      const previousState = undoStack[undoStack.length - 1];
+
+      canvas.loadFromJSON(previousState, function () {
+        canvas.renderAll();
+        updateLayerPanel();
+        isUndoRedoOperation = false;
+        showStatus('↩️ Ação desfeita!');
+      });
+    }
 
     function showStatus(msg) {
       const el = document.getElementById('statusMsg');
@@ -556,12 +625,17 @@
             noScaleCache: false
           });
 
+          canvas.clear();
+          undoStack.length = 0; // Limpa histórico ao carregar novo mapa
+
           canvas.add(img);
           canvas.setActiveObject(img);
           canvas.renderAll();
 
           setActiveTool('select');
           updateLayerPanel();
+          updateZoomIndicator();
+          saveState(); // Salva estado inicial
           showStatus('✅ Mapa e cores carregados com precisão!');
         });
       };
@@ -651,6 +725,7 @@
         pathPoints = [];
         setActiveTool('select');
         updateLayerPanel();
+        saveState();
         showStatus('📐 Caminho vetorial concluído!');
       }
     }
@@ -665,13 +740,6 @@
       updateLayerPanel();
       showStatus('❌ Caminho cancelado.');
     }
-
-    window.addEventListener('keydown', function (e) {
-      if (currentTool === 'path') {
-        if (e.key === 'Enter') finishPath();
-        if (e.key === 'Escape') cancelPath();
-      }
-    });
 
     canvas.on('mouse:dblclick', function () {
       if (currentTool === 'path') {
@@ -705,6 +773,7 @@
       canvas.add(path);
       canvas.setActiveObject(path);
       canvas.renderAll();
+      saveState();
       document.getElementById('symbolSelect').value = '';
     }
 
@@ -719,6 +788,7 @@
       canvas.add(rect);
       canvas.setActiveObject(rect);
       canvas.renderAll();
+      saveState();
     }
 
     function addCircle() {
@@ -732,6 +802,7 @@
       canvas.add(circle);
       canvas.setActiveObject(circle);
       canvas.renderAll();
+      saveState();
     }
 
     function addLine() {
@@ -745,6 +816,7 @@
       canvas.add(line);
       canvas.setActiveObject(line);
       canvas.renderAll();
+      saveState();
     }
 
     function addText() {
@@ -758,6 +830,7 @@
       canvas.add(text);
       canvas.setActiveObject(text);
       canvas.renderAll();
+      saveState();
     }
 
     function updateStrokeStyle() {
@@ -765,6 +838,7 @@
       if (activeObj) {
         applyDashToObj(activeObj);
         canvas.renderAll();
+        saveState();
       }
     }
 
@@ -792,6 +866,7 @@
             if (activeObj.stroke) activeObj.set('stroke', color);
           }
           canvas.renderAll();
+          saveState();
         }
       }
     }
@@ -856,6 +931,7 @@
           updateProgress(total, total);
           canvas.renderAll();
           updateLayerPanel();
+          saveState();
           showStatus(`🔓 Desagrupado com sucesso! (${total} sub-camadas)`);
         });
         return;
@@ -879,11 +955,84 @@
         isBatchUpdating = false;
         canvas.renderAll();
         updateLayerPanel();
+        saveState();
         showStatus(`🔓 Desagrupado com sucesso!`);
       } else {
         isBatchUpdating = false;
         showStatus('💡 Esta camada já é um elemento individual.');
       }
+    }
+
+    function copySelected() {
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) {
+        showStatus('⚠️ Nenhuma camada selecionada para copiar.');
+        return;
+      }
+
+      activeObj.clone(function (cloned) {
+        clipboard = cloned;
+        showStatus('📋 Camada copiada para a área de transferência.');
+      }, ['rawSVGData', 'customName']);
+    }
+
+    function cutSelected() {
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) {
+        showStatus('⚠️ Nenhuma camada selecionada para cortar.');
+        return;
+      }
+
+      copySelected();
+      canvas.remove(activeObj);
+      canvas.discardActiveObject();
+      canvas.renderAll();
+      updateLayerPanel();
+      saveState();
+      showStatus('✂️ Camada recortada.');
+    }
+
+    function pasteSelected() {
+      if (!clipboard) {
+        showStatus('⚠️ A área de transferência está vazia.');
+        return;
+      }
+
+      clipboard.clone(function (clonedObj) {
+        canvas.discardActiveObject();
+
+        clonedObj.set({
+          left: clonedObj.left + 20,
+          top: clonedObj.top + 20,
+          evented: true,
+          selectable: true,
+          cornerColor: '#0d9488',
+          cornerStyle: 'circle',
+          transparentCorners: false
+        });
+
+        if (clonedObj.type === 'activeSelection') {
+          clonedObj.canvas = canvas;
+          clonedObj.forEachObject(function (obj) {
+            canvas.add(obj);
+          });
+          clonedObj.setCoords();
+        } else {
+          if (clipboard.customName) {
+            clonedObj.customName = clipboard.customName + ' (Cópia)';
+          }
+          canvas.add(clonedObj);
+        }
+
+        clipboard.top += 10;
+        clipboard.left += 10;
+
+        canvas.setActiveObject(clonedObj);
+        canvas.renderAll();
+        updateLayerPanel();
+        saveState();
+        showStatus('📌 Camada colada com sucesso!');
+      }, ['rawSVGData', 'customName']);
     }
 
     function deleteSelected() {
@@ -893,11 +1042,42 @@
         canvas.discardActiveObject();
         canvas.renderAll();
         updateLayerPanel();
+        saveState();
       }
     }
 
+    // Atalhos globais de teclado (Undo, Copiar, Recortar, Colar e Apagar)
+    window.addEventListener('keydown', function (e) {
+      if (['input', 'textarea', 'select'].includes(e.target.tagName.toLowerCase())) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault();
+        copySelected();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
+        e.preventDefault();
+        cutSelected();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault();
+        pasteSelected();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (currentTool === 'select' && canvas.getActiveObject()) {
+          e.preventDefault();
+          deleteSelected();
+        }
+      } else if (currentTool === 'path') {
+        if (e.key === 'Enter') finishPath();
+        if (e.key === 'Escape') cancelPath();
+      }
+    });
+
+    // Registar modificações de objetos para o histórico
+    canvas.on('object:modified', saveState);
+
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS COM AUTO-SCROLL AUTOMÁTICO
+    // PAINEL DE CAMADAS COM EDICAO DE NOMES E AUTO-SCROLL
     // -------------------------------------------------------------
     function updateLayerPanel() {
       if (isBatchUpdating) return;
@@ -927,25 +1107,30 @@
           activeItemElement = item;
         }
 
-        let name = 'Sub-camada Vetorial';
-        if (obj.type === 'rect') name = '🟦 Retângulo';
-        else if (obj.type === 'circle') name = '🟠 Círculo';
-        else if (obj.type === 'line') name = '➖ Linha';
-        else if (obj.type === 'polyline') name = `📐 Path (${obj.points ? obj.points.length : 0} pts)`;
-        else if (obj.type === 'polygon') name = `📐 Polígono (${obj.points ? obj.points.length : 0} pts)`;
-        else if (obj.type === 'textbox') name = '🔤 Texto';
-        else if (obj.type === 'group') name = `📦 Grupo (${obj.getObjects().length} elem.)`;
-        else if (obj.type === 'image') name = '🗺️ Mapa Vetorial Completo';
-        else if (obj.type === 'path') name = '✏️ Path / Símbolo';
+        let name = obj.customName;
+        if (!name) {
+          if (obj.type === 'rect') name = '🟦 Retângulo';
+          else if (obj.type === 'circle') name = '🟠 Círculo';
+          else if (obj.type === 'line') name = '➖ Linha';
+          else if (obj.type === 'polyline') name = `📐 Path (${obj.points ? obj.points.length : 0} pts)`;
+          else if (obj.type === 'polygon') name = `📐 Polígono (${obj.points ? obj.points.length : 0} pts)`;
+          else if (obj.type === 'textbox') name = '🔤 Texto';
+          else if (obj.type === 'group') name = `📦 Grupo (${obj.getObjects().length} elem.)`;
+          else if (obj.type === 'image') name = '🗺️ Mapa Vetorial Completo';
+          else if (obj.type === 'path') name = '✏️ Path / Símbolo';
+          else name = 'Sub-camada Vetorial';
+        }
 
         const isVisible = obj.visible !== false;
+        const realIndex = objects.length - 1 - idx;
 
         item.innerHTML = `
           <div class="layer-info">
-            <span>${name}</span>
+            <span title="${name}">${name}</span>
           </div>
           <div class="layer-actions">
-            <button class="btn-icon" title="${isVisible ? 'Ocultar' : 'Mostrar'}" onclick="toggleVisibility(event, ${objects.length - 1 - idx})">
+            <button class="btn-icon" title="Renomear Camada" onclick="renameLayer(event, ${realIndex})">✏️</button>
+            <button class="btn-icon" title="${isVisible ? 'Ocultar' : 'Mostrar'}" onclick="toggleVisibility(event, ${realIndex})">
               ${isVisible ? '👁️' : '🙈'}
             </button>
           </div>
@@ -967,11 +1152,26 @@
         layerList.appendChild(item);
       });
 
-      // Faz scroll automático até à camada ativa para garantir que fica visível na barra lateral
       if (activeItemElement) {
         setTimeout(() => {
           activeItemElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }, 50);
+      }
+    }
+
+    function renameLayer(e, realIndex) {
+      e.stopPropagation();
+      const objects = canvas.getObjects();
+      const obj = objects[realIndex];
+      if (obj) {
+        const currentName = obj.customName || '';
+        const newName = prompt('Introduza o nome para esta camada:', currentName);
+        if (newName !== null && newName.trim() !== '') {
+          obj.customName = newName.trim();
+          updateLayerPanel();
+          saveState();
+          showStatus('🏷️ Nome da camada atualizado!');
+        }
       }
     }
 
@@ -996,24 +1196,66 @@
     canvas.on('selection:cleared', updateLayerPanel);
 
     // -------------------------------------------------------------
-    // CONTROLO DE ZOOM
+    // CONTROLO E FERRAMENTAS DE ZOOM AVANÇADO
     // -------------------------------------------------------------
+    function updateZoomIndicator() {
+      const zoomPercent = Math.round(canvas.getZoom() * 100);
+      document.getElementById('zoomText').innerText = `${zoomPercent}%`;
+    }
+
     canvas.on('mouse:wheel', function (opt) {
       const e = opt.e;
       let zoom = canvas.getZoom();
 
       zoom *= Math.pow(0.998, e.deltaY);
-      zoom = Math.max(0.1, Math.min(8, zoom));
+      zoom = Math.max(0.05, Math.min(50, zoom));
 
       canvas.zoomToPoint(new fabric.Point(e.offsetX, e.offsetY), zoom);
+      updateZoomIndicator();
 
       e.preventDefault();
       e.stopPropagation();
       canvas.requestRenderAll();
     });
 
+    function stepZoom(delta) {
+      let zoom = canvas.getZoom();
+      zoom += delta;
+      zoom = Math.max(0.05, Math.min(50, zoom));
+      
+      const center = canvas.getCenter();
+      canvas.zoomToPoint(new fabric.Point(center.left, center.top), zoom);
+      updateZoomIndicator();
+      canvas.requestRenderAll();
+    }
+
     function resetZoom() {
       canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+      updateZoomIndicator();
+      canvas.requestRenderAll();
+    }
+
+    function zoomToFit() {
+      const objects = canvas.getObjects();
+      if (objects.length === 0) return;
+
+      const group = new fabric.Group(objects);
+      const groupWidth = group.width * group.scaleX;
+      const groupHeight = group.height * group.scaleY;
+
+      const scaleX = (canvas.width * 0.9) / groupWidth;
+      const scaleY = (canvas.height * 0.9) / groupHeight;
+      let zoom = Math.min(scaleX, scaleY);
+      zoom = Math.max(0.05, Math.min(50, zoom));
+
+      canvas.setZoom(zoom);
+      
+      const vpt = canvas.viewportTransform;
+      vpt[4] = (canvas.width / 2) - (group.left * zoom);
+      vpt[5] = (canvas.height / 2) - (group.top * zoom);
+
+      updateZoomIndicator();
+      canvas.requestRenderAll();
     }
 
     function exportSVG() {
