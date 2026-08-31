@@ -269,7 +269,7 @@
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
     
-    <!-- Recorte Nativo Direto estilo Word -->
+    <!-- Recorte Nativo Estilo Word -->
     <div class="crop-subtools">
       <button id="btnWordCrop" onclick="startWordStyleCrop()" style="background-color: #0284c7; border-color: #38bdf8;">✂️ Recortar (Estilo Word)</button>
       <button id="btnConfirmCrop" onclick="confirmWordCrop()" style="display:none; background-color: #16a34a; border-color: #22c55e;">✅ Confirmar</button>
@@ -406,10 +406,11 @@
     let activePathLine = null;
     let clipboard = null;
 
-    // VARIÁVEIS PARA RECORTE DIRETO NOS MANIPULADORES NATIVOS DO OBJETO
+    // RECORTE MATEMÁTICO SEM DEFORMAÇÃO / SEM ESCALONAMENTO
     let isCropMode = false;
     let targetCropObj = null;
-    let cropOriginalProps = null;
+    let cropRectMask = null;
+    let initialCropState = null;
     let activeCorner = null;
 
     // LÓGICA DE UNDO
@@ -548,7 +549,7 @@
     }
 
     // -------------------------------------------------------------
-    // RECORTE NATIVO DIRETO NOS 8 PONTOS DO PRÓPRIO OBJETO (SEM FORMAS A PARTE)
+    // RECORTE RIGOROSO NATIVO WORD (CONTEÚDO FIXO + JANELA DE CORTE DIRETA)
     // -------------------------------------------------------------
     function startWordStyleCrop() {
       const activeObj = canvas.getActiveObject();
@@ -560,22 +561,31 @@
       isCropMode = true;
       targetCropObj = activeObj;
 
-      // Guarda estado original
-      cropOriginalProps = {
-        left: targetCropObj.left,
-        top: targetCropObj.top,
-        width: targetCropObj.width,
-        height: targetCropObj.height,
-        scaleX: targetCropObj.scaleX,
-        scaleY: targetCropObj.scaleY,
+      // Guarda estado inicial exato para permitir cancelamento
+      initialCropState = {
+        clipPath: targetCropObj.clipPath,
         cropX: targetCropObj.cropX || 0,
         cropY: targetCropObj.cropY || 0,
-        clipPath: targetCropObj.clipPath,
-        originX: targetCropObj.originX,
-        originY: targetCropObj.originY
+        width: targetCropObj.width,
+        height: targetCropObj.height,
+        left: targetCropObj.left,
+        top: targetCropObj.top,
+        scaleX: targetCropObj.scaleX,
+        scaleY: targetCropObj.scaleY,
+        cropRect: targetCropObj._cropRectData ? { ...targetCropObj._cropRectData } : {
+          l: -targetCropObj.width / 2,
+          t: -targetCropObj.height / 2,
+          w: targetCropObj.width,
+          h: targetCropObj.height
+        }
       };
 
-      // Muda o estilo dos manipuladores do PRÓPRIO OBJETO para estilo Recorte Word (Pretos)
+      // Inicializa os limites da máscara de corte se ainda não existirem
+      if (!targetCropObj._cropRectData) {
+        targetCropObj._cropRectData = { ...initialCropState.cropRect };
+      }
+
+      // Altera o estilo dos manipuladores do próprio objeto para pretos (Estilo Word)
       targetCropObj.set({
         cornerColor: '#0f172a',
         cornerStrokeColor: '#38bdf8',
@@ -592,65 +602,60 @@
       document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
       document.getElementById('btnCancelCrop').style.display = 'inline-flex';
 
-      showStatus('✂️ Puxa diretamente qualquer um dos 8 manipuladores pretos para recortar.');
+      showStatus('✂️ Puxa o manipulador do lado desejado para ocultar essa margem.');
     }
 
-    // Identifica o manipulador exato que começou a ser arrastado
+    // Regista o manipulador exato que está a ser tocado
     canvas.on('before:transform', function (opt) {
       if (isCropMode && opt.transform) {
         activeCorner = opt.transform.corner;
-
-        // Ajusta temporariamente a origem da transformação para o lado OPOSTO ao manipulador arrastado,
-        // garantindo que o lado oposto permaneça 100% fixo no canvas!
-        const obj = opt.transform.target;
-        if (activeCorner === 'mr') { obj.originX = 'left'; }
-        else if (activeCorner === 'ml') { obj.originX = 'right'; }
-        else if (activeCorner === 'mb') { obj.originY = 'top'; }
-        else if (activeCorner === 'mt') { obj.originY = 'bottom'; }
-        else if (activeCorner === 'tl') { obj.originX = 'right'; obj.originY = 'bottom'; }
-        else if (activeCorner === 'tr') { obj.originX = 'left'; obj.originY = 'bottom'; }
-        else if (activeCorner === 'bl') { obj.originX = 'right'; obj.originY = 'top'; }
-        else if (activeCorner === 'br') { obj.originX = 'left'; obj.originY = 'top'; }
-
-        obj.setCoords();
       }
     });
 
-    // Processa o corte em tempo real em resposta ao arrasto do manipulador
+    // Anula o esticamento do Fabric.js e converte a tração do manipulador em corte sem deformação
     canvas.on('object:scaling', function (e) {
       if (!isCropMode || e.target !== targetCropObj) return;
 
       const obj = e.target;
+      const corner = activeCorner;
+      const data = obj._cropRectData;
 
-      // Impede deformações: a escala do conteúdo é travada
-      const currentScaleX = cropOriginalProps.scaleX;
-      const currentScaleY = cropOriginalProps.scaleY;
+      // Calcula as distâncias puxadas em unidades sem escala
+      const diffW = (obj.width * (obj.scaleX - initialCropState.scaleX)) / initialCropState.scaleX;
+      const diffH = (obj.height * (obj.scaleY - initialCropState.scaleY)) / initialCropState.scaleY;
 
-      // Calcula as dimensões resultantes em pixels
-      const newWidth = obj.width * obj.scaleX;
-      const newHeight = obj.height * obj.scaleY;
+      // Bloqueia a escala do objeto na dimensão original
+      obj.scaleX = initialCropState.scaleX;
+      obj.scaleY = initialCropState.scaleY;
 
-      if (obj.type === 'image') {
-        // Aplicação de corte nativo de imagem em pixels
-        obj.set({
-          width: newWidth / currentScaleX,
-          height: newHeight / currentScaleY,
-          scaleX: currentScaleX,
-          scaleY: currentScaleY
-        });
-      } else {
-        // Aplicação de máscara para formas e símbolos vetoriais
-        const clipRect = new fabric.Rect({
-          left: -newWidth / 2,
-          top: -newHeight / 2,
-          width: newWidth / currentScaleX,
-          height: newHeight / currentScaleY,
-          originX: 'left',
-          originY: 'top'
-        });
-        obj.set({ clipPath: clipRect });
+      // Ajusta rigorosamente apenas a margem correspondente ao manipulador acionado:
+      if (corner === 'mr') { // LADO DIREITO
+        data.w = Math.max(10, data.w + diffW);
+      } else if (corner === 'ml') { // LADO ESQUERDO
+        const actualShift = Math.min(diffW, data.w - 10);
+        data.l += actualShift;
+        data.w -= actualShift;
+        obj.left += (actualShift * obj.scaleX) / 2;
+      } else if (corner === 'mb') { // LADO DE BAIXO
+        data.h = Math.max(10, data.h + diffH);
+      } else if (corner === 'mt') { // LADO DE CIMA
+        const actualShift = Math.min(diffH, data.h - 10);
+        data.t += actualShift;
+        data.h -= actualShift;
+        obj.top += (actualShift * obj.scaleY) / 2;
       }
 
+      // Aplica a janela de corte sem deformar o conteúdo
+      cropRectMask = new fabric.Rect({
+        left: data.l,
+        top: data.t,
+        width: data.w,
+        height: data.h,
+        originX: 'left',
+        originY: 'top'
+      });
+
+      obj.set({ clipPath: cropRectMask });
       obj.setCoords();
       canvas.renderAll();
     });
@@ -658,14 +663,8 @@
     function confirmWordCrop() {
       if (!targetCropObj) return;
 
-      // Restaura a origem centralizada padrão sem mover o objeto do sítio
-      const center = targetCropObj.getCenterPoint();
-
+      // Restaura o visual normal (círculos verdes/turquesa)
       targetCropObj.set({
-        originX: 'center',
-        originY: 'center',
-        left: center.x,
-        top: center.y,
         cornerColor: '#0d9488',
         cornerStyle: 'circle',
         cornerSize: 12,
@@ -673,26 +672,24 @@
         lockRotation: false
       });
 
-      targetCropObj.setCoords();
       resetCropUI();
       saveState();
-      showStatus('✅ Recorte do objeto confirmado!');
+      showStatus('✅ Recorte limpo aplicado com sucesso!');
     }
 
     function cancelWordCrop() {
-      if (targetCropObj && cropOriginalProps) {
+      if (targetCropObj && initialCropState) {
+        targetCropObj._cropRectData = initialCropState.cropRect ? { ...initialCropState.cropRect } : null;
         targetCropObj.set({
-          scaleX: cropOriginalProps.scaleX,
-          scaleY: cropOriginalProps.scaleY,
-          left: cropOriginalProps.left,
-          top: cropOriginalProps.top,
-          width: cropOriginalProps.width,
-          height: cropOriginalProps.height,
-          cropX: cropOriginalProps.cropX,
-          cropY: cropOriginalProps.cropY,
-          clipPath: cropOriginalProps.clipPath,
-          originX: cropOriginalProps.originX || 'center',
-          originY: cropOriginalProps.originY || 'center',
+          scaleX: initialCropState.scaleX,
+          scaleY: initialCropState.scaleY,
+          left: initialCropState.left,
+          top: initialCropState.top,
+          width: initialCropState.width,
+          height: initialCropState.height,
+          cropX: initialCropState.cropX,
+          cropY: initialCropState.cropY,
+          clipPath: initialCropState.clipPath,
           cornerColor: '#0d9488',
           cornerStyle: 'circle',
           lockRotation: false
@@ -707,7 +704,7 @@
     function resetCropUI() {
       isCropMode = false;
       targetCropObj = null;
-      cropOriginalProps = null;
+      initialCropState = null;
       activeCorner = null;
 
       document.getElementById('btnWordCrop').style.display = 'inline-flex';
