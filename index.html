@@ -31,12 +31,13 @@
       border-bottom: 1px solid #334155;
       align-items: center;
       flex-wrap: wrap;
-      z-index: 10;
+      z-index: 20;
     }
 
     .toolbar button,
     .toolbar label.btn-upload,
-    .toolbar select {
+    .toolbar select,
+    .toolbar input[type="number"] {
       background-color: #334155;
       color: #f8fafc;
       border: 1px solid #475569;
@@ -82,21 +83,11 @@
       margin: 0 2px;
     }
 
-    .pen-subtools, .eraser-subtools {
+    .pen-subtools, .eraser-subtools, .zoom-group {
       display: inline-flex;
       gap: 4px;
       background-color: #0f172a;
       padding: 3px 6px;
-      border-radius: 6px;
-      border: 1px solid #334155;
-      align-items: center;
-    }
-
-    .zoom-group {
-      display: inline-flex;
-      gap: 3px;
-      background-color: #0f172a;
-      padding: 3px;
       border-radius: 6px;
       border: 1px solid #334155;
       align-items: center;
@@ -114,15 +105,51 @@
       display: flex;
       flex: 1;
       overflow: hidden;
+      position: relative;
     }
 
-    .main-container {
-      display: flex;
+    /* ÁREA DO CANVAS COM RÉGUAS */
+    .ruler-container {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      grid-template-rows: 24px 1fr;
       flex: 1;
       position: relative;
       background-color: #0f172a;
+      overflow: hidden;
+    }
+
+    .ruler-corner {
+      background-color: #1e293b;
+      border-right: 1px solid #334155;
+      border-bottom: 1px solid #334155;
+      z-index: 15;
+    }
+
+    .ruler-top {
+      background-color: #1e293b;
+      border-bottom: 1px solid #334155;
+      cursor: row-resize;
+      position: relative;
+      overflow: hidden;
+      z-index: 14;
+    }
+
+    .ruler-left {
+      background-color: #1e293b;
+      border-right: 1px solid #334155;
+      cursor: col-resize;
+      position: relative;
+      overflow: hidden;
+      z-index: 14;
+    }
+
+    .main-container {
+      position: relative;
       overflow: auto;
-      padding: 40px;
+      background-color: #0f172a;
+      display: flex;
+      padding: 20px;
     }
 
     .canvas-wrapper {
@@ -133,14 +160,22 @@
       position: relative;
     }
 
+    /* PAINEL LATERAL DE CAMADAS E PASTAS */
     .sidebar {
-      width: 310px;
+      width: 320px;
       background-color: #1e293b;
       border-left: 1px solid #334155;
       display: flex;
       flex-direction: column;
       padding: 12px;
       gap: 10px;
+      z-index: 20;
+    }
+
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
 
     .sidebar h3 {
@@ -181,10 +216,40 @@
     .layer-list {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
       overflow-y: auto;
       flex: 1;
       scroll-behavior: smooth;
+    }
+
+    .folder-item {
+      background-color: #1e293b;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      overflow: hidden;
+    }
+
+    .folder-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background-color: #334155;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .folder-header:hover { background-color: #475569; }
+
+    .folder-content {
+      padding: 4px 0 4px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background-color: rgba(15, 23, 42, 0.4);
     }
 
     .layer-item {
@@ -233,7 +298,7 @@
       color: #cbd5e1;
       cursor: pointer;
       padding: 2px 4px;
-      font-size: 12px;
+      font-size: 11px;
       border-radius: 3px;
     }
 
@@ -255,11 +320,21 @@
       display: none;
       z-index: 100;
     }
+
+    /* GUIAS DE ALINHAMENTO DO PHOTOSHOP */
+    .guide-line-h, .guide-line-v {
+      position: absolute;
+      background-color: #38bdf8;
+      z-index: 12;
+      pointer-events: auto;
+    }
+    .guide-line-h { height: 1px; width: 100%; cursor: row-resize; }
+    .guide-line-v { width: 1px; height: 100%; cursor: col-resize; }
   </style>
 </head>
 <body>
 
-  <!-- Barra de Ferramentas Superior -->
+  <!-- BARRA DE FERRAMENTAS SUPERIOR COMPLETA -->
   <div class="toolbar">
     <label class="btn-upload">
       📁 Importar SVG
@@ -271,15 +346,15 @@
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
     
-    <!-- BORRACHA DE PRECISÃO DE 1PX A 300PX -->
+    <!-- BORRACHA DE PRECISÃO LOCALIZADA -->
     <div class="eraser-subtools">
       <button id="btnEraser" onclick="setActiveTool('eraser')" style="background-color: #e11d48; border-color: #f43f5e;">🧹 Borracha</button>
-
       <label for="eraserSize" style="font-size: 11px; color: #cbd5e1;">Tam:</label>
-      <input type="range" id="eraserSize" min="1" max="300" value="1" style="width: 80px; cursor: pointer;" oninput="updateEraserSize(this.value)">
-      <span id="eraserSizeVal" style="font-size: 11px; color: #f43f5e; min-width: 28px; font-weight: 600;">1px</span>
+      <input type="range" id="eraserSize" min="1" max="300" value="1" style="width: 70px; cursor: pointer;" oninput="updateEraserSize(this.value)">
+      <span id="eraserSizeVal" style="font-size: 11px; color: #f43f5e; font-weight: 600;">1px</span>
     </div>
 
+    <!-- FERRAMENTA PEN E CAMINHOS -->
     <div class="pen-subtools">
       <button id="btnPath" onclick="setActiveTool('path')">📐 Pen</button>
       <button onclick="closeCurrentPath()" title="Fechar caminho">🔄 Fechar</button>
@@ -291,11 +366,18 @@
 
     <div class="separator"></div>
 
+    <!-- FERRAMENTAS DE ALINHAMENTO E PRECISÃO -->
+    <button id="btnGrid" onclick="toggleGrid()">🏁 Grelha</button>
+    <button onclick="clearGuides()" title="Limpar todas as guias de alinhamento">📏 Limpar Guias</button>
+
+    <div class="separator"></div>
+
     <button onclick="addRect()">🟦 Retângulo</button>
     <button onclick="addCircle()">🟠 Círculo</button>
     <button onclick="addLine()">➖ Linha</button>
     <button onclick="addText()">🔤 Texto</button>
 
+    <!-- GALERIA DE SÍMBOLOS COMPLETA -->
     <select id="symbolSelect" onchange="addSymbol(this.value)">
       <option value="" disabled selected>➕ Galeria de Símbolos...</option>
       <optgroup label="Infraestruturas e Obras">
@@ -332,13 +414,13 @@
 
     <div class="separator"></div>
 
-    <!-- Guardar / Carregar na Cache Local -->
+    <!-- CACHE LOCAL -->
     <button onclick="saveToStorage()" style="background-color: #8b5cf6; border-color: #a78bfa;" title="Guardar no Browser (Ctrl+S)">💾 Guardar na Cache</button>
     <button onclick="loadFromStorage()" style="background-color: #6366f1; border-color: #818cf8;" title="Carregar do Browser">📂 Carregar da Cache</button>
 
     <div class="separator"></div>
 
-    <!-- Operações Edição & Histórico Undo Instântaneo -->
+    <!-- OPERAÇÕES EDIÇÃO & UNDO INSTANTÂNEO -->
     <button onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
     <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">📋 Cortar</button>
     <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📄 Copiar</button>
@@ -347,7 +429,7 @@
 
     <div class="separator"></div>
 
-    <!-- Controlo e Ferramentas de Zoom -->
+    <!-- CONTROLO DE ZOOM -->
     <div class="zoom-group">
       <button onclick="stepZoom(-0.25)" title="Afastar (Zoom Out)">➖</button>
       <span class="zoom-level-text" id="zoomText">100%</span>
@@ -360,14 +442,25 @@
   </div>
 
   <div class="app-body">
-    <div class="main-container" id="mainContainer">
-      <div class="canvas-wrapper" id="canvasWrapper">
-        <canvas id="vectorCanvas" width="1200" height="800"></canvas>
+    <!-- ESTRUTURA DAS RÉGUAS ESTILO PHOTOSHOP -->
+    <div class="ruler-container">
+      <div class="ruler-corner"></div>
+      <canvas id="rulerTop" class="ruler-top" height="24"></canvas>
+      <canvas id="rulerLeft" class="ruler-left" width="24"></canvas>
+
+      <div class="main-container" id="mainContainer">
+        <div class="canvas-wrapper" id="canvasWrapper">
+          <canvas id="vectorCanvas" width="1200" height="800"></canvas>
+        </div>
       </div>
     </div>
 
+    <!-- PAINEL LATERAL DE CAMADAS E PASTAS -->
     <div class="sidebar">
-      <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
+      <div class="sidebar-header">
+        <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
+        <button onclick="createFolder()" class="btn-icon" style="background-color: #334155; padding: 4px 8px;" title="Nova Pasta">📁 Criar Pasta</button>
+      </div>
 
       <div class="progress-box" id="progressBox">
         <div style="display: flex; justify-content: space-between;">
@@ -410,19 +503,22 @@
     let activePathLine = null;
     let clipboard = null;
     let targetEraserObj = null;
+    let showGrid = false;
+    const folders = [];
+
+    const CUSTOM_PROPS = ['rawSVGData', 'customName', 'folderId'];
 
     // -------------------------------------------------------------
-    // HISTÓRICO UNDO ULTRA-RÁPIDO (SEM TRAVAMENTOS)
+    // HISTÓRICO DE UNDO LEVE E INSTANTÂNEO EM MEMÓRIA
     // -------------------------------------------------------------
     const undoStack = [];
     let isUndoRedoOperation = false;
     const MAX_UNDO_LEVELS = 30;
-    const CUSTOM_PROPS = ['rawSVGData', 'customName'];
 
     function saveState() {
       if (isBatchUpdating || isUndoRedoOperation) return;
 
-      const jsonState = canvas.toJSON(CUSTOM_PROPS);
+      const jsonState = canvas.toDatalessJSON(CUSTOM_PROPS);
       const strState = JSON.stringify(jsonState);
 
       if (undoStack.length > 0 && undoStack[undoStack.length - 1] === strState) {
@@ -444,18 +540,19 @@
 
       isUndoRedoOperation = true;
       undoStack.pop();
-      const previousState = undoStack[undoStack.length - 1];
+      const previousState = JSON.parse(undoStack[undoStack.length - 1]);
 
       canvas.loadFromJSON(previousState, function () {
         canvas.renderAll();
         updateLayerPanel();
         updateZoomIndicator();
+        drawRulers();
         isUndoRedoOperation = false;
         showStatus('↩️ Ação desfeita!');
       });
     }
 
-    setTimeout(saveState, 200);
+    setTimeout(saveState, 300);
 
     function saveToStorage() {
       try {
@@ -481,6 +578,7 @@
         canvas.renderAll();
         updateLayerPanel();
         updateZoomIndicator();
+        drawRulers();
         undoStack.length = 0;
         saveState();
         isUndoRedoOperation = false;
@@ -515,7 +613,7 @@
     }
 
     // -------------------------------------------------------------
-    // BORRACHA DIRETA COM SELEÇÃO PERMANENTE E FIXA
+    // FERRAMENTAS E MÃO DE ARRASTAR
     // -------------------------------------------------------------
     function updateEraserSize(val) {
       document.getElementById('eraserSizeVal').innerText = val + 'px';
@@ -558,23 +656,14 @@
         }
 
         targetEraserObj = activeObj;
-        
-        // Destaca a camada selecionada com um rebordo verde neon para não perder visualmente a seleção
-        targetEraserObj.set({
-          stroke: '#22c55e',
-          strokeWidth: 2 / canvas.getZoom()
-        });
+        targetEraserObj.set({ stroke: '#22c55e', strokeWidth: 2 / canvas.getZoom() });
 
         document.getElementById('btnEraser').classList.add('active');
         canvas.isDrawingMode = true;
 
-        // Pincel de desenho ajustado ao Zoom
         const eraserBrush = new fabric.PencilBrush(canvas);
         eraserBrush.color = '#ffffff';
-
-        const size = parseInt(document.getElementById('eraserSize').value, 10);
-        eraserBrush.width = Math.max(0.1, size / canvas.getZoom());
-
+        eraserBrush.width = Math.max(0.1, parseInt(document.getElementById('eraserSize').value, 10) / canvas.getZoom());
         canvas.freeDrawingBrush = eraserBrush;
 
         setObjectsInteractive(false);
@@ -597,25 +686,17 @@
       }
     }
 
-    // APLICA O RECORTE DO TRAÇO EM TEMPO REAL À CAMADA SELECIONADA
     canvas.on('path:created', function (opt) {
       if (currentTool === 'eraser' && targetEraserObj) {
         const pathObj = opt.path;
         canvas.remove(pathObj);
 
-        // Prepara a máscara isolada
         if (!targetEraserObj.clipPath) {
-          targetEraserObj.clipPath = new fabric.Group([], {
-            originX: 'center',
-            originY: 'center',
-            inverted: true // Define transparência onde o pincel passa
-          });
+          targetEraserObj.clipPath = new fabric.Group([], { originX: 'center', originY: 'center', inverted: true });
         }
 
-        // Converte as coordenadas do traço para a matriz local da camada
         const invMatrix = fabric.util.invertTransform(targetEraserObj.calcTransformMatrix());
-        const pathCenterCanvas = pathObj.getCenterPoint();
-        const localCenter = fabric.util.transformPoint(pathCenterCanvas, invMatrix);
+        const localCenter = fabric.util.transformPoint(pathObj.getCenterPoint(), invMatrix);
 
         pathObj.set({
           left: localCenter.x,
@@ -652,6 +733,9 @@
       canvas.renderAll();
     }
 
+    // -------------------------------------------------------------
+    // PROCESSAMENTO DE SVGS E ESTILOS CSS NATIVOS
+    // -------------------------------------------------------------
     function prepareSVGWithStyles(svgString) {
       try {
         const parser = new DOMParser();
@@ -826,6 +910,7 @@
         vpt[4] += e.clientX - handLastX;
         vpt[5] += e.clientY - handLastY;
         canvas.requestRenderAll();
+        drawRulers();
         handLastX = e.clientX;
         handLastY = e.clientY;
       }
@@ -906,6 +991,104 @@
       }
     });
 
+    // -------------------------------------------------------------
+    // RÉGUAS E GUIAS DE ALINHAMENTO
+    // -------------------------------------------------------------
+    const rulerTopCanvas = document.getElementById('rulerTop');
+    const rulerLeftCanvas = document.getElementById('rulerLeft');
+    const rulerTopCtx = rulerTopCanvas.getContext('2d');
+    const rulerLeftCtx = rulerLeftCanvas.getContext('2d');
+
+    function drawRulers() {
+      const container = document.getElementById('mainContainer');
+      rulerTopCanvas.width = container.clientWidth;
+      rulerLeftCanvas.height = container.clientHeight;
+
+      const zoom = canvas.getZoom();
+      const vpt = canvas.viewportTransform;
+
+      rulerTopCtx.clearRect(0, 0, rulerTopCanvas.width, rulerTopCanvas.height);
+      rulerTopCtx.fillStyle = '#1e293b';
+      rulerTopCtx.fillRect(0, 0, rulerTopCanvas.width, 24);
+      rulerTopCtx.strokeStyle = '#64748b';
+      rulerTopCtx.fillStyle = '#94a3b8';
+      rulerTopCtx.font = '9px sans-serif';
+
+      const startX = vpt[4];
+      for (let x = 0; x < rulerTopCanvas.width; x += 50 * zoom) {
+        const posX = startX + x;
+        rulerTopCtx.beginPath();
+        rulerTopCtx.moveTo(posX, 14);
+        rulerTopCtx.lineTo(posX, 24);
+        rulerTopCtx.stroke();
+        rulerTopCtx.fillText(Math.round(x / zoom), posX + 3, 12);
+      }
+
+      rulerLeftCtx.clearRect(0, 0, rulerLeftCanvas.width, rulerLeftCanvas.height);
+      rulerLeftCtx.fillStyle = '#1e293b';
+      rulerLeftCtx.fillRect(0, 0, 24, rulerLeftCanvas.height);
+      rulerLeftCtx.strokeStyle = '#64748b';
+      rulerLeftCtx.fillStyle = '#94a3b8';
+
+      const startY = vpt[5];
+      for (let y = 0; y < rulerLeftCanvas.height; y += 50 * zoom) {
+        const posY = startY + y;
+        rulerLeftCtx.beginPath();
+        rulerLeftCtx.moveTo(14, posY);
+        rulerLeftCtx.lineTo(24, posY);
+        rulerLeftCtx.stroke();
+      }
+    }
+
+    let isDraggingRuler = null;
+
+    rulerTopCanvas.addEventListener('mousedown', () => isDraggingRuler = 'H');
+    rulerLeftCanvas.addEventListener('mousedown', () => isDraggingRuler = 'V');
+
+    window.addEventListener('mouseup', (e) => {
+      if (isDraggingRuler) {
+        const mainRect = document.getElementById('mainContainer').getBoundingClientRect();
+        if (isDraggingRuler === 'H') {
+          createGuide('H', e.clientY - mainRect.top);
+        } else {
+          createGuide('V', e.clientX - mainRect.left);
+        }
+        isDraggingRuler = null;
+      }
+    });
+
+    function createGuide(type, pos) {
+      const guide = document.createElement('div');
+      guide.className = type === 'H' ? 'guide-line-h' : 'guide-line-v';
+      if (type === 'H') guide.style.top = pos + 'px';
+      else guide.style.left = pos + 'px';
+
+      guide.ondblclick = () => guide.remove();
+      document.getElementById('mainContainer').appendChild(guide);
+      showStatus('📏 Guia de alinhamento adicionada! (Duplo clique para remover)');
+    }
+
+    function clearGuides() {
+      document.querySelectorAll('.guide-line-h, .guide-line-v').forEach(g => g.remove());
+      showStatus('📏 Todas as guias foram removidas.');
+    }
+
+    function toggleGrid() {
+      showGrid = !showGrid;
+      document.getElementById('btnGrid').classList.toggle('active', showGrid);
+
+      if (showGrid) {
+        canvas.setBackgroundColor({
+          source: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="none"/><path d="M 20 0 L 0 0 0 20" fill="none" stroke="%23cbd5e1" stroke-width="0.5"/></svg>'
+        }, canvas.renderAll.bind(canvas));
+      } else {
+        canvas.setBackgroundColor('#ffffff', canvas.renderAll.bind(canvas));
+      }
+    }
+
+    // -------------------------------------------------------------
+    // ADICIONAR ELEMENTOS E SÍMBOLOS
+    // -------------------------------------------------------------
     function addSymbol(type) {
       if (!type) return;
       setActiveTool('select');
@@ -1207,7 +1390,7 @@
 
     canvas.on('object:modified', saveState);
 
-    // Atalhos de teclado
+    // ATALHOS DE TECLADO
     window.addEventListener('keydown', function (e) {
       if (['input', 'textarea', 'select'].includes(e.target.tagName.toLowerCase())) return;
 
@@ -1238,8 +1421,17 @@
     });
 
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS COM RENOMEAÇÃO DIRETA
+    // PAINEL DE CAMADAS E PASTAS DE ORGANIZAÇÃO
     // -------------------------------------------------------------
+    function createFolder() {
+      const name = prompt('Nome da nova pasta:', `Pasta ${folders.length + 1}`);
+      if (name) {
+        folders.push({ id: 'folder_' + Date.now(), name: name, open: true });
+        updateLayerPanel();
+        showStatus('📁 Pasta criada!');
+      }
+    }
+
     function updateLayerPanel() {
       if (isBatchUpdating) return;
 
@@ -1248,24 +1440,40 @@
       document.getElementById('layerCount').innerText = objects.length;
       layerList.innerHTML = '';
 
-      if (objects.length === 0) {
+      if (objects.length === 0 && folders.length === 0) {
         layerList.innerHTML = '<div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">Nenhum elemento no canvas</div>';
         return;
       }
 
+      folders.forEach(folder => {
+        const folderEl = document.createElement('div');
+        folderEl.className = 'folder-item';
+
+        folderEl.innerHTML = `
+          <div class="folder-header">
+            <span onclick="toggleFolder('${folder.id}')">📁 ${folder.name}</span>
+            <div>
+              <button class="btn-icon" onclick="renameFolder('${folder.id}')">✏️</button>
+              <button class="btn-icon" onclick="deleteFolder('${folder.id}')">🗑️</button>
+            </div>
+          </div>
+          <div class="folder-content" id="${folder.id}" style="display: ${folder.open ? 'flex' : 'none'};"></div>
+        `;
+        layerList.appendChild(folderEl);
+      });
+
       const activeObject = canvas.getActiveObject() || targetEraserObj;
-      let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
         const item = document.createElement('div');
         const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
+        const realIndex = objects.length - 1 - idx;
 
         item.className = 'layer-item' + (isPathObj ? ' is-path' : '');
 
         const isSelected = activeObject === obj || (activeObject && activeObject.type === 'activeSelection' && activeObject.contains && activeObject.contains(obj));
         if (isSelected) {
           item.classList.add('active');
-          activeItemElement = item;
         }
 
         let name = obj.customName;
@@ -1283,14 +1491,17 @@
         }
 
         const isVisible = obj.visible !== false;
-        const realIndex = objects.length - 1 - idx;
 
         item.innerHTML = `
           <div class="layer-info">
             <span title="Duplo clique para renomear" ondblclick="renameLayer(event, ${realIndex})">${name}</span>
           </div>
           <div class="layer-actions">
-            <button class="btn-icon" title="Renomear Camada" onclick="renameLayer(event, ${realIndex})">✏️</button>
+            <select style="font-size: 10px; padding: 2px; background-color: #1e293b; color: #fff; border: 1px solid #475569; border-radius: 3px;" onchange="moveObjToFolder(${realIndex}, this.value)">
+              <option value="">Sem Pasta</option>
+              ${folders.map(f => `<option value="${f.id}" ${obj.folderId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
+            </select>
+            <button class="btn-icon" title="Renomear" onclick="renameLayer(event, ${realIndex})">✏️</button>
             <button class="btn-icon" title="${isVisible ? 'Ocultar' : 'Mostrar'}" onclick="toggleVisibility(event, ${realIndex})">
               ${isVisible ? '👁️' : '🙈'}
             </button>
@@ -1298,7 +1509,7 @@
         `;
 
         item.onclick = function (e) {
-          if (e.target.tagName === 'BUTTON') return;
+          if (['BUTTON', 'SELECT'].includes(e.target.tagName)) return;
           if (currentTool === 'select') {
             if (obj.visible !== false) {
               canvas.setActiveObject(obj);
@@ -1310,13 +1521,45 @@
           }
         };
 
-        layerList.appendChild(item);
+        if (obj.folderId && document.getElementById(obj.folderId)) {
+          document.getElementById(obj.folderId).appendChild(item);
+        } else {
+          layerList.appendChild(item);
+        }
       });
+    }
 
-      if (activeItemElement) {
-        setTimeout(() => {
-          activeItemElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }, 50);
+    function toggleFolder(id) {
+      const f = folders.find(f => f.id === id);
+      if (f) {
+        f.open = !f.open;
+        updateLayerPanel();
+      }
+    }
+
+    function renameFolder(id) {
+      const f = folders.find(f => f.id === id);
+      if (f) {
+        const newName = prompt('Novo nome para a pasta:', f.name);
+        if (newName) { f.name = newName; updateLayerPanel(); }
+      }
+    }
+
+    function deleteFolder(id) {
+      const idx = folders.findIndex(f => f.id === id);
+      if (idx !== -1) {
+        canvas.getObjects().forEach(o => { if (o.folderId === id) delete o.folderId; });
+        folders.splice(idx, 1);
+        updateLayerPanel();
+      }
+    }
+
+    function moveObjToFolder(objIdx, folderId) {
+      const obj = canvas.getObjects()[objIdx];
+      if (obj) {
+        obj.folderId = folderId || null;
+        updateLayerPanel();
+        saveState();
       }
     }
 
@@ -1357,7 +1600,7 @@
     canvas.on('selection:cleared', updateLayerPanel);
 
     // -------------------------------------------------------------
-    // CONTROLO E FERRAMENTAS DE ZOOM AVANÇADO
+    // CONTROLO DE ZOOM
     // -------------------------------------------------------------
     function updateZoomIndicator() {
       const zoomPercent = Math.round(canvas.getZoom() * 100);
@@ -1367,6 +1610,7 @@
         const size = parseInt(document.getElementById('eraserSize').value, 10);
         canvas.freeDrawingBrush.width = Math.max(0.1, size / canvas.getZoom());
       }
+      drawRulers();
     }
 
     canvas.on('mouse:wheel', function (opt) {
@@ -1432,6 +1676,10 @@
       link.download = 'desenho_vetorial.svg';
       link.click();
     }
+
+    document.getElementById('mainContainer').onscroll = drawRulers;
+    window.onresize = drawRulers;
+    setTimeout(drawRulers, 300);
   </script>
 </body>
 </html>
