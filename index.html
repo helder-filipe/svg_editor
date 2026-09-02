@@ -82,13 +82,14 @@
       margin: 0 2px;
     }
 
-    .pen-subtools, .crop-subtools {
+    .pen-subtools, .eraser-subtools {
       display: inline-flex;
       gap: 4px;
       background-color: #0f172a;
       padding: 3px 6px;
       border-radius: 6px;
       border: 1px solid #334155;
+      align-items: center;
     }
 
     .zoom-group {
@@ -129,6 +130,7 @@
       border-radius: 4px;
       background-color: #ffffff;
       margin: auto;
+      position: relative;
     }
 
     .sidebar {
@@ -269,11 +271,13 @@
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
     
-    <!-- Recorte Nativo Estilo Word -->
-    <div class="crop-subtools">
-      <button id="btnWordCrop" onclick="startWordStyleCrop()" style="background-color: #0284c7; border-color: #38bdf8;">✂️ Recortar (Estilo Word)</button>
-      <button id="btnConfirmCrop" onclick="confirmWordCrop()" style="display:none; background-color: #16a34a; border-color: #22c55e;">✅ Confirmar</button>
-      <button id="btnCancelCrop" onclick="cancelWordCrop()" style="display:none; background-color: #ef4444; border-color: #f87171;">❌ Cancelar</button>
+    <!-- BORRACHA DE PRECISÃO DE 1PX A 300PX -->
+    <div class="eraser-subtools">
+      <button id="btnEraser" onclick="setActiveTool('eraser')" style="background-color: #e11d48; border-color: #f43f5e;">🧹 Borracha</button>
+
+      <label for="eraserSize" style="font-size: 11px; color: #cbd5e1;">Tam:</label>
+      <input type="range" id="eraserSize" min="1" max="300" value="1" style="width: 80px; cursor: pointer;" oninput="updateEraserSize(this.value)">
+      <span id="eraserSizeVal" style="font-size: 11px; color: #f43f5e; min-width: 28px; font-weight: 600;">1px</span>
     </div>
 
     <div class="pen-subtools">
@@ -334,7 +338,7 @@
 
     <div class="separator"></div>
 
-    <!-- Operações Edição & Histórico -->
+    <!-- Operações Edição & Histórico Undo Instântaneo -->
     <button onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
     <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">📋 Cortar</button>
     <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📄 Copiar</button>
@@ -357,7 +361,7 @@
 
   <div class="app-body">
     <div class="main-container" id="mainContainer">
-      <div class="canvas-wrapper">
+      <div class="canvas-wrapper" id="canvasWrapper">
         <canvas id="vectorCanvas" width="1200" height="800"></canvas>
       </div>
     </div>
@@ -405,24 +409,27 @@
     let pathPoints = [];
     let activePathLine = null;
     let clipboard = null;
+    let targetEraserObj = null;
 
-    // RECORTE MATEMÁTICO SEM DEFORMAÇÃO / SEM ESCALONAMENTO
-    let isCropMode = false;
-    let targetCropObj = null;
-    let cropRectMask = null;
-    let initialCropState = null;
-    let activeCorner = null;
-
-    // LÓGICA DE UNDO
+    // -------------------------------------------------------------
+    // HISTÓRICO UNDO ULTRA-RÁPIDO (SEM TRAVAMENTOS)
+    // -------------------------------------------------------------
     const undoStack = [];
     let isUndoRedoOperation = false;
-    const MAX_UNDO_LEVELS = 25;
+    const MAX_UNDO_LEVELS = 30;
+    const CUSTOM_PROPS = ['rawSVGData', 'customName'];
 
     function saveState() {
-      if (isBatchUpdating || isUndoRedoOperation || isCropMode) return;
-      
-      const jsonState = JSON.stringify(canvas.toJSON(['rawSVGData', 'customName']));
-      undoStack.push(jsonState);
+      if (isBatchUpdating || isUndoRedoOperation) return;
+
+      const jsonState = canvas.toJSON(CUSTOM_PROPS);
+      const strState = JSON.stringify(jsonState);
+
+      if (undoStack.length > 0 && undoStack[undoStack.length - 1] === strState) {
+        return;
+      }
+
+      undoStack.push(strState);
 
       if (undoStack.length > MAX_UNDO_LEVELS) {
         undoStack.shift();
@@ -430,8 +437,6 @@
     }
 
     function undo() {
-      if (isCropMode) cancelWordCrop();
-
       if (undoStack.length <= 1) {
         showStatus('⚠️ Sem mais ações para desfazer.');
         return;
@@ -444,15 +449,17 @@
       canvas.loadFromJSON(previousState, function () {
         canvas.renderAll();
         updateLayerPanel();
+        updateZoomIndicator();
         isUndoRedoOperation = false;
         showStatus('↩️ Ação desfeita!');
       });
     }
 
-    // GESTÃO DA CACHE LOCAL
+    setTimeout(saveState, 200);
+
     function saveToStorage() {
       try {
-        const jsonState = JSON.stringify(canvas.toJSON(['rawSVGData', 'customName']));
+        const jsonState = JSON.stringify(canvas.toJSON(CUSTOM_PROPS));
         localStorage.setItem('infralobo_canvas_project', jsonState);
         showStatus('💾 Projeto guardado na cache do browser com sucesso!');
       } catch (e) {
@@ -507,9 +514,18 @@
       fill.style.width = `${pct}%`;
     }
 
-    function setActiveTool(tool) {
-      if (isCropMode && tool !== 'select') cancelWordCrop();
+    // -------------------------------------------------------------
+    // BORRACHA DIRETA COM SELEÇÃO PERMANENTE E FIXA
+    // -------------------------------------------------------------
+    function updateEraserSize(val) {
+      document.getElementById('eraserSizeVal').innerText = val + 'px';
+      if (currentTool === 'eraser' && canvas.freeDrawingBrush) {
+        const currentZoom = canvas.getZoom();
+        canvas.freeDrawingBrush.width = Math.max(0.1, parseInt(val, 10) / currentZoom);
+      }
+    }
 
+    function setActiveTool(tool) {
       currentTool = tool;
       document.querySelectorAll('.toolbar button').forEach(btn => btn.classList.remove('active'));
 
@@ -519,12 +535,51 @@
         document.getElementById('btnSelect').classList.add('active');
         canvas.selection = true;
         canvas.defaultCursor = 'default';
+        if (targetEraserObj) {
+          targetEraserObj.set({ stroke: null, strokeWidth: 0 });
+          targetEraserObj = null;
+        }
         setObjectsInteractive(true);
       } else if (tool === 'hand') {
         document.getElementById('btnHand').classList.add('active');
         canvas.selection = false;
         canvas.defaultCursor = 'grab';
+        if (targetEraserObj) {
+          targetEraserObj.set({ stroke: null, strokeWidth: 0 });
+          targetEraserObj = null;
+        }
         setObjectsInteractive(false);
+      } else if (tool === 'eraser') {
+        const activeObj = canvas.getActiveObject() || targetEraserObj;
+        if (!activeObj) {
+          showStatus('⚠️ Seleciona primeiro a camada que queres apagar com a borracha!');
+          setActiveTool('select');
+          return;
+        }
+
+        targetEraserObj = activeObj;
+        
+        // Destaca a camada selecionada com um rebordo verde neon para não perder visualmente a seleção
+        targetEraserObj.set({
+          stroke: '#22c55e',
+          strokeWidth: 2 / canvas.getZoom()
+        });
+
+        document.getElementById('btnEraser').classList.add('active');
+        canvas.isDrawingMode = true;
+
+        // Pincel de desenho ajustado ao Zoom
+        const eraserBrush = new fabric.PencilBrush(canvas);
+        eraserBrush.color = '#ffffff';
+
+        const size = parseInt(document.getElementById('eraserSize').value, 10);
+        eraserBrush.width = Math.max(0.1, size / canvas.getZoom());
+
+        canvas.freeDrawingBrush = eraserBrush;
+
+        setObjectsInteractive(false);
+        canvas.renderAll();
+        showStatus('🧹 Borracha ativa no objeto verde! Passa a borracha na zona a apagar.');
       } else if (tool === 'path') {
         document.getElementById('btnPath').classList.add('active');
         canvas.selection = false;
@@ -534,183 +589,66 @@
       } else if (tool === 'pencil') {
         document.getElementById('btnPencil').classList.add('active');
         canvas.isDrawingMode = true;
-        canvas.freeDrawingBrush.color = document.getElementById('fillColor').value;
-        canvas.freeDrawingBrush.width = 3;
+        const pencil = new fabric.PencilBrush(canvas);
+        pencil.color = document.getElementById('fillColor').value;
+        pencil.width = 3;
+        canvas.freeDrawingBrush = pencil;
         setObjectsInteractive(false);
       }
     }
+
+    // APLICA O RECORTE DO TRAÇO EM TEMPO REAL À CAMADA SELECIONADA
+    canvas.on('path:created', function (opt) {
+      if (currentTool === 'eraser' && targetEraserObj) {
+        const pathObj = opt.path;
+        canvas.remove(pathObj);
+
+        // Prepara a máscara isolada
+        if (!targetEraserObj.clipPath) {
+          targetEraserObj.clipPath = new fabric.Group([], {
+            originX: 'center',
+            originY: 'center',
+            inverted: true // Define transparência onde o pincel passa
+          });
+        }
+
+        // Converte as coordenadas do traço para a matriz local da camada
+        const invMatrix = fabric.util.invertTransform(targetEraserObj.calcTransformMatrix());
+        const pathCenterCanvas = pathObj.getCenterPoint();
+        const localCenter = fabric.util.transformPoint(pathCenterCanvas, invMatrix);
+
+        pathObj.set({
+          left: localCenter.x,
+          top: localCenter.y,
+          originX: 'center',
+          originY: 'center',
+          scaleX: pathObj.scaleX / targetEraserObj.scaleX,
+          scaleY: pathObj.scaleY / targetEraserObj.scaleY,
+          fill: null,
+          stroke: '#000000',
+          strokeWidth: pathObj.strokeWidth / targetEraserObj.scaleX
+        });
+
+        if (targetEraserObj.clipPath.addWithUpdate) {
+          targetEraserObj.clipPath.addWithUpdate(pathObj);
+        } else if (targetEraserObj.clipPath._objects) {
+          targetEraserObj.clipPath._objects.push(pathObj);
+        }
+
+        targetEraserObj.setCoords();
+        canvas.requestRenderAll();
+        saveState();
+        showStatus('🧹 Área apagada com sucesso!');
+      } else if (currentTool === 'pencil') {
+        saveState();
+      }
+    });
 
     function setObjectsInteractive(enable) {
       canvas.forEachObject(function (obj) {
         obj.selectable = enable;
         obj.evented = enable;
       });
-      canvas.renderAll();
-    }
-
-    // -------------------------------------------------------------
-    // RECORTE RIGOROSO NATIVO WORD (CONTEÚDO FIXO + JANELA DE CORTE DIRETA)
-    // -------------------------------------------------------------
-    function startWordStyleCrop() {
-      const activeObj = canvas.getActiveObject();
-      if (!activeObj) {
-        showStatus('⚠️ Seleciona primeiro o objeto que queres recortar.');
-        return;
-      }
-
-      isCropMode = true;
-      targetCropObj = activeObj;
-
-      // Guarda estado inicial exato para permitir cancelamento
-      initialCropState = {
-        clipPath: targetCropObj.clipPath,
-        cropX: targetCropObj.cropX || 0,
-        cropY: targetCropObj.cropY || 0,
-        width: targetCropObj.width,
-        height: targetCropObj.height,
-        left: targetCropObj.left,
-        top: targetCropObj.top,
-        scaleX: targetCropObj.scaleX,
-        scaleY: targetCropObj.scaleY,
-        cropRect: targetCropObj._cropRectData ? { ...targetCropObj._cropRectData } : {
-          l: -targetCropObj.width / 2,
-          t: -targetCropObj.height / 2,
-          w: targetCropObj.width,
-          h: targetCropObj.height
-        }
-      };
-
-      // Inicializa os limites da máscara de corte se ainda não existirem
-      if (!targetCropObj._cropRectData) {
-        targetCropObj._cropRectData = { ...initialCropState.cropRect };
-      }
-
-      // Altera o estilo dos manipuladores do próprio objeto para pretos (Estilo Word)
-      targetCropObj.set({
-        cornerColor: '#0f172a',
-        cornerStrokeColor: '#38bdf8',
-        cornerStyle: 'rect',
-        cornerSize: 10,
-        transparentCorners: false,
-        lockRotation: true,
-        hasRotatingPoint: false
-      });
-
-      canvas.renderAll();
-
-      document.getElementById('btnWordCrop').style.display = 'none';
-      document.getElementById('btnConfirmCrop').style.display = 'inline-flex';
-      document.getElementById('btnCancelCrop').style.display = 'inline-flex';
-
-      showStatus('✂️ Puxa o manipulador do lado desejado para ocultar essa margem.');
-    }
-
-    // Regista o manipulador exato que está a ser tocado
-    canvas.on('before:transform', function (opt) {
-      if (isCropMode && opt.transform) {
-        activeCorner = opt.transform.corner;
-      }
-    });
-
-    // Anula o esticamento do Fabric.js e converte a tração do manipulador em corte sem deformação
-    canvas.on('object:scaling', function (e) {
-      if (!isCropMode || e.target !== targetCropObj) return;
-
-      const obj = e.target;
-      const corner = activeCorner;
-      const data = obj._cropRectData;
-
-      // Calcula as distâncias puxadas em unidades sem escala
-      const diffW = (obj.width * (obj.scaleX - initialCropState.scaleX)) / initialCropState.scaleX;
-      const diffH = (obj.height * (obj.scaleY - initialCropState.scaleY)) / initialCropState.scaleY;
-
-      // Bloqueia a escala do objeto na dimensão original
-      obj.scaleX = initialCropState.scaleX;
-      obj.scaleY = initialCropState.scaleY;
-
-      // Ajusta rigorosamente apenas a margem correspondente ao manipulador acionado:
-      if (corner === 'mr') { // LADO DIREITO
-        data.w = Math.max(10, data.w + diffW);
-      } else if (corner === 'ml') { // LADO ESQUERDO
-        const actualShift = Math.min(diffW, data.w - 10);
-        data.l += actualShift;
-        data.w -= actualShift;
-        obj.left += (actualShift * obj.scaleX) / 2;
-      } else if (corner === 'mb') { // LADO DE BAIXO
-        data.h = Math.max(10, data.h + diffH);
-      } else if (corner === 'mt') { // LADO DE CIMA
-        const actualShift = Math.min(diffH, data.h - 10);
-        data.t += actualShift;
-        data.h -= actualShift;
-        obj.top += (actualShift * obj.scaleY) / 2;
-      }
-
-      // Aplica a janela de corte sem deformar o conteúdo
-      cropRectMask = new fabric.Rect({
-        left: data.l,
-        top: data.t,
-        width: data.w,
-        height: data.h,
-        originX: 'left',
-        originY: 'top'
-      });
-
-      obj.set({ clipPath: cropRectMask });
-      obj.setCoords();
-      canvas.renderAll();
-    });
-
-    function confirmWordCrop() {
-      if (!targetCropObj) return;
-
-      // Restaura o visual normal (círculos verdes/turquesa)
-      targetCropObj.set({
-        cornerColor: '#0d9488',
-        cornerStyle: 'circle',
-        cornerSize: 12,
-        transparentCorners: false,
-        lockRotation: false
-      });
-
-      resetCropUI();
-      saveState();
-      showStatus('✅ Recorte limpo aplicado com sucesso!');
-    }
-
-    function cancelWordCrop() {
-      if (targetCropObj && initialCropState) {
-        targetCropObj._cropRectData = initialCropState.cropRect ? { ...initialCropState.cropRect } : null;
-        targetCropObj.set({
-          scaleX: initialCropState.scaleX,
-          scaleY: initialCropState.scaleY,
-          left: initialCropState.left,
-          top: initialCropState.top,
-          width: initialCropState.width,
-          height: initialCropState.height,
-          cropX: initialCropState.cropX,
-          cropY: initialCropState.cropY,
-          clipPath: initialCropState.clipPath,
-          cornerColor: '#0d9488',
-          cornerStyle: 'circle',
-          lockRotation: false
-        });
-        targetCropObj.setCoords();
-      }
-
-      resetCropUI();
-      showStatus('❌ Recorte cancelado.');
-    }
-
-    function resetCropUI() {
-      isCropMode = false;
-      targetCropObj = null;
-      initialCropState = null;
-      activeCorner = null;
-
-      document.getElementById('btnWordCrop').style.display = 'inline-flex';
-      document.getElementById('btnConfirmCrop').style.display = 'none';
-      document.getElementById('btnCancelCrop').style.display = 'none';
-
       canvas.renderAll();
     }
 
@@ -963,9 +901,7 @@
     }
 
     canvas.on('mouse:dblclick', function () {
-      if (isCropMode) {
-        confirmWordCrop();
-      } else if (currentTool === 'path') {
+      if (currentTool === 'path') {
         finishPath();
       }
     });
@@ -1073,7 +1009,7 @@
     }
 
     function updateColor(color) {
-      if (canvas.isDrawingMode) {
+      if (canvas.isDrawingMode && currentTool === 'pencil') {
         canvas.freeDrawingBrush.color = color;
       } else {
         const activeObj = canvas.getActiveObject();
@@ -1196,7 +1132,7 @@
       activeObj.clone(function (cloned) {
         clipboard = cloned;
         showStatus('📋 Camada copiada para a área de transferência.');
-      }, ['rawSVGData', 'customName']);
+      }, CUSTOM_PROPS);
     }
 
     function cutSelected() {
@@ -1255,7 +1191,7 @@
         updateLayerPanel();
         saveState();
         showStatus('📌 Camada colada com sucesso!');
-      }, ['rawSVGData', 'customName']);
+      }, CUSTOM_PROPS);
     }
 
     function deleteSelected() {
@@ -1268,6 +1204,8 @@
         saveState();
       }
     }
+
+    canvas.on('object:modified', saveState);
 
     // Atalhos de teclado
     window.addEventListener('keydown', function (e) {
@@ -1299,8 +1237,6 @@
       }
     });
 
-    canvas.on('object:modified', saveState);
-
     // -------------------------------------------------------------
     // PAINEL DE CAMADAS COM RENOMEAÇÃO DIRETA
     // -------------------------------------------------------------
@@ -1317,7 +1253,7 @@
         return;
       }
 
-      const activeObject = canvas.getActiveObject();
+      const activeObject = canvas.getActiveObject() || targetEraserObj;
       let activeItemElement = null;
 
       [...objects].reverse().forEach((obj, idx) => {
@@ -1426,6 +1362,11 @@
     function updateZoomIndicator() {
       const zoomPercent = Math.round(canvas.getZoom() * 100);
       document.getElementById('zoomText').innerText = `${zoomPercent}%`;
+      
+      if (currentTool === 'eraser' && canvas.freeDrawingBrush) {
+        const size = parseInt(document.getElementById('eraserSize').value, 10);
+        canvas.freeDrawingBrush.width = Math.max(0.1, size / canvas.getZoom());
+      }
     }
 
     canvas.on('mouse:wheel', function (opt) {
@@ -1433,7 +1374,7 @@
       let zoom = canvas.getZoom();
 
       zoom *= Math.pow(0.998, e.deltaY);
-      zoom = Math.max(0.05, Math.min(50, zoom));
+      zoom = Math.max(0.05, Math.min(500, zoom));
 
       canvas.zoomToPoint(new fabric.Point(e.offsetX, e.offsetY), zoom);
       updateZoomIndicator();
@@ -1446,7 +1387,7 @@
     function stepZoom(delta) {
       let zoom = canvas.getZoom();
       zoom += delta;
-      zoom = Math.max(0.05, Math.min(50, zoom));
+      zoom = Math.max(0.05, Math.min(500, zoom));
       
       const center = canvas.getCenter();
       canvas.zoomToPoint(new fabric.Point(center.left, center.top), zoom);
@@ -1471,7 +1412,7 @@
       const scaleX = (canvas.width * 0.9) / groupWidth;
       const scaleY = (canvas.height * 0.9) / groupHeight;
       let zoom = Math.min(scaleX, scaleY);
-      zoom = Math.max(0.05, Math.min(50, zoom));
+      zoom = Math.max(0.05, Math.min(500, zoom));
 
       canvas.setZoom(zoom);
       
