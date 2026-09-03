@@ -396,7 +396,7 @@
     <button onclick="addLine()">➖ Linha</button>
     <button onclick="addText()">🔤 Texto</button>
 
-    <!-- PAINEL DE CONTROLO DE TEXTO (FONTE, BOLD, ALINHAMENTO) -->
+    <!-- PAINEL DE CONTROLO DE TEXTO -->
     <div class="text-subtools">
       <select id="fontSelect" onchange="updateFontFamily(this.value)" style="background-color: #0f172a; color: #38bdf8; font-weight: bold; border-color: #38bdf8;">
         <option value="Nunito" selected>🔤 Nunito (Logótipo)</option>
@@ -452,7 +452,8 @@
 
     <div class="separator"></div>
 
-    <button onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
+    <!-- BOTÃO UNDO ATUALIZADO -->
+    <button id="btnUndo" onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
     <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">📋 Cortar</button>
     <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📄 Copiar</button>
     <button onclick="pasteSelected()" title="Colar Camada (Ctrl+V)">📌 Colar</button>
@@ -511,6 +512,15 @@
   <div class="status-msg" id="statusMsg"></div>
 
   <script>
+    // Configuração para incluir propriedades personalizadas na serialização global
+    const CUSTOM_PROPS = ['rawSVGData', 'customName', 'folderId', 'fontFamily', 'textAlign', 'fontWeight'];
+    
+    fabric.Object.prototype.toObject = (function (toObject) {
+      return function (propertiesToInclude) {
+        return toObject.call(this, (propertiesToInclude || []).concat(CUSTOM_PROPS));
+      };
+    })(fabric.Object.prototype.toObject);
+
     const canvas = new fabric.Canvas('vectorCanvas', {
       isDrawingMode: false,
       selection: true,
@@ -534,24 +544,20 @@
     let showGrid = false;
     const folders = [];
 
-    // Estado local para formatação de texto
     let currentTextAlign = 'left';
     let isBoldActive = false;
 
-    const CUSTOM_PROPS = ['rawSVGData', 'customName', 'folderId', 'fontFamily', 'textAlign', 'fontWeight'];
-
     // -------------------------------------------------------------
-    // HISTÓRICO UNDO INSTANTÂNEO
+    // SISTEMA DE UNDO (HISTÓRICO) TOTALMENTE RESTRUTURADO
     // -------------------------------------------------------------
     const undoStack = [];
     let isUndoRedoOperation = false;
-    const MAX_UNDO_LEVELS = 30;
+    const MAX_UNDO_LEVELS = 40;
 
     function saveState() {
       if (isBatchUpdating || isUndoRedoOperation) return;
 
-      const jsonState = canvas.toDatalessJSON(CUSTOM_PROPS);
-      const strState = JSON.stringify(jsonState);
+      const strState = JSON.stringify(canvas.toJSON());
 
       if (undoStack.length > 0 && undoStack[undoStack.length - 1] === strState) {
         return;
@@ -571,7 +577,11 @@
       }
 
       isUndoRedoOperation = true;
+      
+      // Remove o estado atual da pilha
       undoStack.pop();
+      
+      // Pega o estado imediatamente anterior
       const previousState = JSON.parse(undoStack[undoStack.length - 1]);
 
       canvas.loadFromJSON(previousState, function () {
@@ -580,17 +590,23 @@
         updateZoomIndicator();
         drawRulers();
         isUndoRedoOperation = false;
-        showStatus('↩️ Ação desfeita!');
+        showStatus('↩️ Ação desfeita com sucesso!');
       });
     }
 
-    setTimeout(saveState, 300);
+    // Grava o estado inicial
+    setTimeout(saveState, 200);
+
+    // Eventos do Canvas que ativam a gravação no Histórico
+    canvas.on('object:added', () => { saveState(); updateLayerPanel(); });
+    canvas.on('object:removed', () => { saveState(); updateLayerPanel(); });
+    canvas.on('object:modified', saveState);
 
     function saveToStorage() {
       try {
-        const jsonState = JSON.stringify(canvas.toJSON(CUSTOM_PROPS));
+        const jsonState = JSON.stringify(canvas.toJSON());
         localStorage.setItem('infralobo_canvas_project', jsonState);
-        showStatus('💾 Projeto guardado na cache do browser com sucesso!');
+        showStatus('💾 Projeto guardado na cache do browser!');
       } catch (e) {
         showStatus('⚠️ O mapa é demasiado grande para a memória local do browser.');
       }
@@ -672,7 +688,6 @@
         canvas.renderAll();
       });
 
-      saveState();
       showStatus(`🔤 Texto adicionado!`);
     }
 
@@ -698,7 +713,7 @@
         activeObj.set('fontWeight', isBoldActive ? 'bold' : 'normal');
         canvas.renderAll();
         saveState();
-        showStatus(isBoldActive ? '<b>B</b> Negrito ativado' : 'Negrito desativado');
+        showStatus(isBoldActive ? 'Negrito ativado' : 'Negrito desativado');
       }
     }
 
@@ -749,7 +764,7 @@
     function setActiveTool(tool) {
       currentTool = tool;
       document.querySelectorAll('.toolbar button').forEach(btn => {
-        if (!['btnBold', 'btnAlignLeft', 'btnAlignCenter', 'btnAlignRight', 'btnGrid'].includes(btn.id)) {
+        if (!['btnBold', 'btnAlignLeft', 'btnAlignCenter', 'btnAlignRight', 'btnGrid', 'btnUndo'].includes(btn.id)) {
           btn.classList.remove('active');
         }
       });
@@ -847,8 +862,6 @@
         canvas.requestRenderAll();
         saveState();
         showStatus('🧹 Área apagada com sucesso!');
-      } else if (currentTool === 'pencil') {
-        saveState();
       }
     });
 
@@ -1005,7 +1018,6 @@
           setActiveTool('select');
           updateLayerPanel();
           updateZoomIndicator();
-          saveState();
           showStatus('✅ Mapa e cores carregados com precisão!');
         });
       };
@@ -1092,7 +1104,6 @@
         pathPoints = [];
         setActiveTool('select');
         updateLayerPanel();
-        saveState();
         showStatus('📐 Caminho vetorial concluído!');
       }
     }
@@ -1238,7 +1249,6 @@
       canvas.add(path);
       canvas.setActiveObject(path);
       canvas.renderAll();
-      saveState();
       document.getElementById('symbolSelect').value = '';
     }
 
@@ -1253,7 +1263,6 @@
       canvas.add(rect);
       canvas.setActiveObject(rect);
       canvas.renderAll();
-      saveState();
     }
 
     function addCircle() {
@@ -1267,7 +1276,6 @@
       canvas.add(circle);
       canvas.setActiveObject(circle);
       canvas.renderAll();
-      saveState();
     }
 
     function addLine() {
@@ -1281,7 +1289,6 @@
       canvas.add(line);
       canvas.setActiveObject(line);
       canvas.renderAll();
-      saveState();
     }
 
     function updateStrokeStyle() {
@@ -1323,97 +1330,104 @@
     }
 
     async function ungroupSelected() {
-      const activeObj = canvas.getActiveObject();
-      if (!activeObj) {
-        showStatus('⚠️ Seleciona primeiro a camada do mapa no canvas ou na lista.');
+  const activeObj = canvas.getActiveObject();
+  if (!activeObj) {
+    showStatus('⚠️ Seleciona primeiro a camada do mapa no canvas ou na lista.');
+    return;
+  }
+
+  // 1. Bloqueia atualizações de interface e do histórico (Undo) durante o lote
+  isBatchUpdating = true;
+
+  if (activeObj.type === 'image' && activeObj.rawSVGData) {
+    showStatus('⏳ A extrair sub-camadas (Histórico suspenso para alta velocidade)...');
+    updateProgress(1, 100, 'A preparar estilo...');
+
+    const origScaleX = activeObj.scaleX || 1;
+    const origScaleY = activeObj.scaleY || 1;
+    const origLeft = activeObj.left;
+    const origTop = activeObj.top;
+
+    fabric.loadSVGFromString(activeObj.rawSVGData, async function (objects, options) {
+      if (!objects || objects.length === 0) {
+        showStatus('⚠️ Não foram encontradas sub-camadas.');
+        updateProgress(0, 0);
+        isBatchUpdating = false;
         return;
       }
 
-      isBatchUpdating = true;
+      // Remove a imagem original sem disparar gravação individual no Undo
+      canvas.remove(activeObj);
+      
+      const total = objects.length;
+      const chunkSize = 150; // Aumentado para processar blocos maiores mais depressa
 
-      if (activeObj.type === 'image' && activeObj.rawSVGData) {
-        showStatus('⏳ A extrair sub-camadas com cores preservadas...');
-        updateProgress(1, 100, 'A preparar estilo...');
+      for (let i = 0; i < total; i += chunkSize) {
+        const chunk = objects.slice(i, i + chunkSize);
 
-        const preparedSVG = activeObj.rawSVGData;
-
-        const origScaleX = activeObj.scaleX || 1;
-        const origScaleY = activeObj.scaleY || 1;
-        const origLeft = activeObj.left;
-        const origTop = activeObj.top;
-
-        fabric.loadSVGFromString(activeObj.rawSVGData, async function (objects, options) {
-          if (!objects || objects.length === 0) {
-            showStatus('⚠️ Não foram encontradas sub-camadas.');
-            updateProgress(0, 0);
-            isBatchUpdating = false;
-            return;
-          }
-
-          canvas.remove(activeObj);
-          const total = objects.length;
-          const chunkSize = 50;
-
-          for (let i = 0; i < total; i += chunkSize) {
-            const chunk = objects.slice(i, i + chunkSize);
-
-            chunk.forEach(obj => {
-              if (obj) {
-                obj.set({
-                  scaleX: obj.scaleX * origScaleX,
-                  scaleY: obj.scaleY * origScaleY,
-                  left: origLeft + (obj.left - (options.width / 2 || 0)) * origScaleX,
-                  top: origTop + (obj.top - (options.height / 2 || 0)) * origScaleY,
-                  cornerColor: '#0d9488',
-                  cornerStyle: 'circle',
-                  transparentCorners: false,
-                  objectCaching: false
-                });
-                canvas.add(obj);
-              }
+        chunk.forEach(obj => {
+          if (obj) {
+            obj.set({
+              scaleX: obj.scaleX * origScaleX,
+              scaleY: obj.scaleY * origScaleY,
+              left: origLeft + (obj.left - (options.width / 2 || 0)) * origScaleX,
+              top: origTop + (obj.top - (options.height / 2 || 0)) * origScaleY,
+              cornerColor: '#0d9488',
+              cornerStyle: 'circle',
+              transparentCorners: false,
+              objectCaching: true
             });
-
-            const currentCount = Math.min(i + chunkSize, total);
-            updateProgress(currentCount, total, `A importar ${currentCount} de ${total}...`);
-            await new Promise(r => setTimeout(r, 15));
+            // Adiciona sem disparar atualizações pesadas
+            canvas.add(obj);
           }
-
-          isBatchUpdating = false;
-          updateProgress(total, total);
-          canvas.renderAll();
-          updateLayerPanel();
-          saveState();
-          showStatus(`🔓 Desagrupado com sucesso! (${total} sub-camadas)`);
-        });
-        return;
-      }
-
-      if (activeObj.type === 'group') {
-        const items = activeObj.getObjects();
-        activeObj._restoreObjectsState();
-        canvas.remove(activeObj);
-
-        items.forEach(item => {
-          item.set({
-            cornerColor: '#0d9488',
-            cornerStyle: 'circle',
-            transparentCorners: false,
-            objectCaching: false
-          });
-          canvas.add(item);
         });
 
-        isBatchUpdating = false;
-        canvas.renderAll();
-        updateLayerPanel();
-        saveState();
-        showStatus(`🔓 Desagrupado com sucesso!`);
-      } else {
-        isBatchUpdating = false;
-        showStatus('💡 Esta camada já é um elemento individual.');
+        const currentCount = Math.min(i + chunkSize, total);
+        updateProgress(currentCount, total, `A importar ${currentCount} de ${total}...`);
+        await new Promise(r => setTimeout(r, 10)); // Pausa curta para a interface não congelar
       }
-    }
 
+      // 2. Desbloqueia o lote
+      isBatchUpdating = false;
+      updateProgress(total, total);
+      
+      // 3. Renderiza e atualiza o painel de camadas APENAS UMA VEZ no fim
+      canvas.renderAll();
+      updateLayerPanel();
+      
+      // 4. Grava APENAS 1 AÇÃO na pilha do Undo para todas as 9000 camadas!
+      saveState();
+      
+      showStatus(`🔓 Desagrupado com sucesso! (${total} sub-camadas)`);
+    });
+    return;
+  }
+
+  if (activeObj.type === 'group') {
+    const items = activeObj.getObjects();
+    activeObj._restoreObjectsState();
+    canvas.remove(activeObj);
+
+    items.forEach(item => {
+      item.set({
+        cornerColor: '#0d9488',
+        cornerStyle: 'circle',
+        transparentCorners: false,
+        objectCaching: true
+      });
+      canvas.add(item);
+    });
+
+    isBatchUpdating = false;
+    canvas.renderAll();
+    updateLayerPanel();
+    saveState();
+    showStatus(`🔓 Desagrupado com sucesso!`);
+  } else {
+    isBatchUpdating = false;
+    showStatus('💡 Esta camada já é um elemento individual.');
+  }
+}
     function copySelected() {
       const activeObj = canvas.getActiveObject();
       if (!activeObj) {
@@ -1424,7 +1438,7 @@
       activeObj.clone(function (cloned) {
         clipboard = cloned;
         showStatus('📋 Camada copiada para a área de transferência.');
-      }, CUSTOM_PROPS);
+      });
     }
 
     function cutSelected() {
@@ -1483,7 +1497,7 @@
         updateLayerPanel();
         saveState();
         showStatus('📌 Camada colada com sucesso!');
-      }, CUSTOM_PROPS);
+      });
     }
 
     function deleteSelected() {
@@ -1497,25 +1511,33 @@
       }
     }
 
-    canvas.on('object:modified', saveState);
-
-    // ATALHOS DE TECLADO
+    // -------------------------------------------------------------
+    // CAPTURA DE ATALHOS DE TECLADO (CTRL+Z COMPATÍVEL)
+    // -------------------------------------------------------------
     window.addEventListener('keydown', function (e) {
-      if (['input', 'textarea', 'select'].includes(e.target.tagName.toLowerCase())) return;
+      // Se o utilizador estiver a escrever num input ou a editar um texto no canvas, ignora o atalho global
+      const targetTag = e.target.tagName.toLowerCase();
+      const activeObj = canvas.getActiveObject();
+      if (targetTag === 'input' || targetTag === 'textarea' || targetTag === 'select' || (activeObj && activeObj.isEditing)) {
+        return;
+      }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const isCmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         undo();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      } else if (isCmdOrCtrl && e.key.toLowerCase() === 's') {
         e.preventDefault();
         saveToStorage();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      } else if (isCmdOrCtrl && e.key.toLowerCase() === 'c') {
         e.preventDefault();
         copySelected();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
+      } else if (isCmdOrCtrl && e.key.toLowerCase() === 'x') {
         e.preventDefault();
         cutSelected();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      } else if (isCmdOrCtrl && e.key.toLowerCase() === 'v') {
         e.preventDefault();
         pasteSelected();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1702,8 +1724,6 @@
       }
     }
 
-    canvas.on('object:added', updateLayerPanel);
-    canvas.on('object:removed', updateLayerPanel);
     canvas.on('selection:created', updateLayerPanel);
     canvas.on('selection:updated', updateLayerPanel);
     canvas.on('selection:cleared', updateLayerPanel);
