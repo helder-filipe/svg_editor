@@ -1336,69 +1336,70 @@
     return;
   }
 
-  // 1. Bloqueia atualizações de interface e do histórico (Undo) durante o lote
+  // Desativa temporariamente a renderização e o histórico
   isBatchUpdating = true;
+  canvas.renderOnAddRemove = false;
 
   if (activeObj.type === 'image' && activeObj.rawSVGData) {
-    showStatus('⏳ A extrair sub-camadas (Histórico suspenso para alta velocidade)...');
-    updateProgress(1, 100, 'A preparar estilo...');
+    showStatus('⏳ A extrair 9.000 sub-camadas em modo ultra-rápido...');
+    updateProgress(10, 100, 'A processar vetores...');
 
     const origScaleX = activeObj.scaleX || 1;
     const origScaleY = activeObj.scaleY || 1;
     const origLeft = activeObj.left;
     const origTop = activeObj.top;
 
-    fabric.loadSVGFromString(activeObj.rawSVGData, async function (objects, options) {
+    // Pausa para permitir que a mensagem apareça no ecrã antes de processar
+    await new Promise(r => setTimeout(r, 50));
+
+    fabric.loadSVGFromString(activeObj.rawSVGData, function (objects, options) {
       if (!objects || objects.length === 0) {
         showStatus('⚠️ Não foram encontradas sub-camadas.');
         updateProgress(0, 0);
         isBatchUpdating = false;
+        canvas.renderOnAddRemove = true;
         return;
       }
 
-      // Remove a imagem original sem disparar gravação individual no Undo
+      // 1. Remove a imagem do mapa principal
       canvas.remove(activeObj);
-      
-      const total = objects.length;
-      const chunkSize = 150; // Aumentado para processar blocos maiores mais depressa
 
-      for (let i = 0; i < total; i += chunkSize) {
-        const chunk = objects.slice(i, i + chunkSize);
+      const offsetX = options.width / 2 || 0;
+      const offsetY = options.height / 2 || 0;
 
-        chunk.forEach(obj => {
-          if (obj) {
-            obj.set({
-              scaleX: obj.scaleX * origScaleX,
-              scaleY: obj.scaleY * origScaleY,
-              left: origLeft + (obj.left - (options.width / 2 || 0)) * origScaleX,
-              top: origTop + (obj.top - (options.height / 2 || 0)) * origScaleY,
-              cornerColor: '#0d9488',
-              cornerStyle: 'circle',
-              transparentCorners: false,
-              objectCaching: true
-            });
-            // Adiciona sem disparar atualizações pesadas
-            canvas.add(obj);
-          }
-        });
-
-        const currentCount = Math.min(i + chunkSize, total);
-        updateProgress(currentCount, total, `A importar ${currentCount} de ${total}...`);
-        await new Promise(r => setTimeout(r, 10)); // Pausa curta para a interface não congelar
+      // 2. Prepara as propriedades dos 9000 objetos em memória pura (super rápido)
+      for (let i = 0; i < objects.length; i++) {
+        const obj = objects[i];
+        if (obj) {
+          obj.scaleX *= origScaleX;
+          obj.scaleY *= origScaleY;
+          obj.left = origLeft + (obj.left - offsetX) * origScaleX;
+          obj.top = origTop + (obj.top - offsetY) * origScaleY;
+          obj.cornerColor = '#0d9488';
+          obj.cornerStyle = 'circle';
+          obj.transparentCorners = false;
+          obj.objectCaching = true; // Essencial para performance em mapas gigantes
+          obj.canvas = canvas; // Atribui o canvas diretamente
+          
+          // Injeta diretamente na estrutura interna sem disparar eventos do Fabric.js
+          canvas._objects.push(obj);
+        }
       }
 
-      // 2. Desbloqueia o lote
+      // 3. Reativa a renderização e atualiza o estado
+      canvas.renderOnAddRemove = true;
       isBatchUpdating = false;
-      updateProgress(total, total);
+
+      updateProgress(100, 100, 'A renderizar mapa...');
       
-      // 3. Renderiza e atualiza o painel de camadas APENAS UMA VEZ no fim
-      canvas.renderAll();
+      // Renderiza a tela e o painel de camadas uma única vez
+      canvas.requestRenderAll();
       updateLayerPanel();
-      
-      // 4. Grava APENAS 1 AÇÃO na pilha do Undo para todas as 9000 camadas!
+
+      // 4. Grava APENAS 1 ESTADO na pilha de Undo
       saveState();
-      
-      showStatus(`🔓 Desagrupado com sucesso! (${total} sub-camadas)`);
+
+      showStatus(`🔓 Desagrupado com sucesso! (${objects.length} sub-camadas)`);
     });
     return;
   }
@@ -1419,27 +1420,17 @@
     });
 
     isBatchUpdating = false;
-    canvas.renderAll();
+    canvas.renderOnAddRemove = true;
+    canvas.requestRenderAll();
     updateLayerPanel();
     saveState();
     showStatus(`🔓 Desagrupado com sucesso!`);
   } else {
     isBatchUpdating = false;
+    canvas.renderOnAddRemove = true;
     showStatus('💡 Esta camada já é um elemento individual.');
   }
 }
-    function copySelected() {
-      const activeObj = canvas.getActiveObject();
-      if (!activeObj) {
-        showStatus('⚠️ Nenhuma camada selecionada para copiar.');
-        return;
-      }
-
-      activeObj.clone(function (cloned) {
-        clipboard = cloned;
-        showStatus('📋 Camada copiada para a área de transferência.');
-      });
-    }
 
     function cutSelected() {
       const activeObj = canvas.getActiveObject();
