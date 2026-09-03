@@ -3,10 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Editor Vetorial Multi-Camada Avançado</title>
+  <title>Editor Vetorial Multi-Camada Avançado - Infralobo</title>
   <!-- Fabric.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+
   <style>
+    /* -------------------------------------------------------------
+       CARREGAMENTO DE FONTES LOCAIS (PASTA ./fonts/)
+       ------------------------------------------------------------- */
+    @font-face {
+      font-family: 'Nunito';
+      src: url('./fonts/Nunito-Bold.ttf') format('truetype');
+      font-weight: bold;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: 'Inter';
+      src: url('./fonts/Inter-Regular.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: 'Inter-Bold';
+      src: url('./fonts/Inter-Bold.ttf') format('truetype');
+      font-weight: bold;
+      font-style: normal;
+    }
+
     * {
       box-sizing: border-box;
       margin: 0;
@@ -83,7 +108,7 @@
       margin: 0 2px;
     }
 
-    .pen-subtools, .eraser-subtools, .zoom-group {
+    .pen-subtools, .eraser-subtools, .text-subtools, .zoom-group {
       display: inline-flex;
       gap: 4px;
       background-color: #0f172a;
@@ -108,7 +133,6 @@
       position: relative;
     }
 
-    /* ÁREA DO CANVAS COM RÉGUAS */
     .ruler-container {
       display: grid;
       grid-template-columns: 24px 1fr;
@@ -160,7 +184,6 @@
       position: relative;
     }
 
-    /* PAINEL LATERAL DE CAMADAS E PASTAS */
     .sidebar {
       width: 320px;
       background-color: #1e293b;
@@ -321,7 +344,6 @@
       z-index: 100;
     }
 
-    /* GUIAS DE ALINHAMENTO DO PHOTOSHOP */
     .guide-line-h, .guide-line-v {
       position: absolute;
       background-color: #38bdf8;
@@ -334,7 +356,7 @@
 </head>
 <body>
 
-  <!-- BARRA DE FERRAMENTAS SUPERIOR COMPLETA -->
+  <!-- BARRA DE FERRAMENTAS SUPERIOR -->
   <div class="toolbar">
     <label class="btn-upload">
       📁 Importar SVG
@@ -346,7 +368,6 @@
     <button id="btnSelect" class="active" onclick="setActiveTool('select')">🖱️ Selecionar</button>
     <button id="btnHand" onclick="setActiveTool('hand')">✋ Mão (Arrastar)</button>
     
-    <!-- BORRACHA DE PRECISÃO LOCALIZADA -->
     <div class="eraser-subtools">
       <button id="btnEraser" onclick="setActiveTool('eraser')" style="background-color: #e11d48; border-color: #f43f5e;">🧹 Borracha</button>
       <label for="eraserSize" style="font-size: 11px; color: #cbd5e1;">Tam:</label>
@@ -354,7 +375,6 @@
       <span id="eraserSizeVal" style="font-size: 11px; color: #f43f5e; font-weight: 600;">1px</span>
     </div>
 
-    <!-- FERRAMENTA PEN E CAMINHOS -->
     <div class="pen-subtools">
       <button id="btnPath" onclick="setActiveTool('path')">📐 Pen</button>
       <button onclick="closeCurrentPath()" title="Fechar caminho">🔄 Fechar</button>
@@ -366,7 +386,6 @@
 
     <div class="separator"></div>
 
-    <!-- FERRAMENTAS DE ALINHAMENTO E PRECISÃO -->
     <button id="btnGrid" onclick="toggleGrid()">🏁 Grelha</button>
     <button onclick="clearGuides()" title="Limpar todas as guias de alinhamento">📏 Limpar Guias</button>
 
@@ -377,7 +396,21 @@
     <button onclick="addLine()">➖ Linha</button>
     <button onclick="addText()">🔤 Texto</button>
 
-    <!-- GALERIA DE SÍMBOLOS COMPLETA -->
+    <!-- PAINEL DE CONTROLO DE TEXTO (FONTE, BOLD, ALINHAMENTO) -->
+    <div class="text-subtools">
+      <select id="fontSelect" onchange="updateFontFamily(this.value)" style="background-color: #0f172a; color: #38bdf8; font-weight: bold; border-color: #38bdf8;">
+        <option value="Nunito" selected>🔤 Nunito (Logótipo)</option>
+        <option value="Inter-Bold">🔤 Inter Bold (Títulos)</option>
+        <option value="Inter">🔤 Inter Regular (Texto)</option>
+        <option value="Helvetica, Arial, sans-serif">🔤 Arial / Helvetica</option>
+      </select>
+
+      <button id="btnBold" onclick="toggleBold()" title="Negrito / Bold" style="font-weight: 900; padding: 6px 10px;">B</button>
+      <button id="btnAlignLeft" onclick="setTextAlignment('left')" title="Alinhar à Esquerda" class="active">⬅️</button>
+      <button id="btnAlignCenter" onclick="setTextAlignment('center')" title="Alinhar ao Centro">↔️</button>
+      <button id="btnAlignRight" onclick="setTextAlignment('right')" title="Alinhar à Direita">➡️</button>
+    </div>
+
     <select id="symbolSelect" onchange="addSymbol(this.value)">
       <option value="" disabled selected>➕ Galeria de Símbolos...</option>
       <optgroup label="Infraestruturas e Obras">
@@ -408,19 +441,17 @@
     <div class="separator"></div>
 
     <label for="fillColor" style="font-size: 11px;">Cor:</label>
-    <input type="color" id="fillColor" value="#0d9488" onchange="updateColor(this.value)">
+    <input type="color" id="fillColor" value="#000000" onchange="updateColor(this.value)">
 
     <button onclick="ungroupSelected()" style="background-color: #0284c7; border-color: #38bdf8;">🔓 Desagrupar Avançado</button>
 
     <div class="separator"></div>
 
-    <!-- CACHE LOCAL -->
     <button onclick="saveToStorage()" style="background-color: #8b5cf6; border-color: #a78bfa;" title="Guardar no Browser (Ctrl+S)">💾 Guardar na Cache</button>
     <button onclick="loadFromStorage()" style="background-color: #6366f1; border-color: #818cf8;" title="Carregar do Browser">📂 Carregar da Cache</button>
 
     <div class="separator"></div>
 
-    <!-- OPERAÇÕES EDIÇÃO & UNDO INSTANTÂNEO -->
     <button onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
     <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">📋 Cortar</button>
     <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📄 Copiar</button>
@@ -429,7 +460,6 @@
 
     <div class="separator"></div>
 
-    <!-- CONTROLO DE ZOOM -->
     <div class="zoom-group">
       <button onclick="stepZoom(-0.25)" title="Afastar (Zoom Out)">➖</button>
       <span class="zoom-level-text" id="zoomText">100%</span>
@@ -442,7 +472,6 @@
   </div>
 
   <div class="app-body">
-    <!-- ESTRUTURA DAS RÉGUAS ESTILO PHOTOSHOP -->
     <div class="ruler-container">
       <div class="ruler-corner"></div>
       <canvas id="rulerTop" class="ruler-top" height="24"></canvas>
@@ -455,7 +484,6 @@
       </div>
     </div>
 
-    <!-- PAINEL LATERAL DE CAMADAS E PASTAS -->
     <div class="sidebar">
       <div class="sidebar-header">
         <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
@@ -506,10 +534,14 @@
     let showGrid = false;
     const folders = [];
 
-    const CUSTOM_PROPS = ['rawSVGData', 'customName', 'folderId'];
+    // Estado local para formatação de texto
+    let currentTextAlign = 'left';
+    let isBoldActive = false;
+
+    const CUSTOM_PROPS = ['rawSVGData', 'customName', 'folderId', 'fontFamily', 'textAlign', 'fontWeight'];
 
     // -------------------------------------------------------------
-    // HISTÓRICO DE UNDO LEVE E INSTANTÂNEO EM MEMÓRIA
+    // HISTÓRICO UNDO INSTANTÂNEO
     // -------------------------------------------------------------
     const undoStack = [];
     let isUndoRedoOperation = false;
@@ -613,7 +645,98 @@
     }
 
     // -------------------------------------------------------------
-    // FERRAMENTAS E MÃO DE ARRASTAR
+    // GESTÃO DE TEXTO, FONTE, NEGRITO E ALINHAMENTO
+    // -------------------------------------------------------------
+    function addText() {
+      setActiveTool('select');
+      const selectedFont = document.getElementById('fontSelect').value;
+
+      const text = new fabric.Textbox('NOVO TEXTO', {
+        left: canvas.width / 2 - 50,
+        top: canvas.height / 2 - 15,
+        fill: document.getElementById('fillColor').value || '#000000',
+        fontSize: 22,
+        fontFamily: selectedFont,
+        fontWeight: isBoldActive ? 'bold' : 'normal',
+        textAlign: currentTextAlign,
+        cornerColor: '#0d9488',
+        cornerStyle: 'circle',
+        transparentCorners: false
+      });
+
+      canvas.add(text);
+      canvas.setActiveObject(text);
+
+      document.fonts.ready.then(() => {
+        text.initDimensions();
+        canvas.renderAll();
+      });
+
+      saveState();
+      showStatus(`🔤 Texto adicionado!`);
+    }
+
+    function updateFontFamily(font) {
+      const activeObj = canvas.getActiveObject();
+      if (activeObj && activeObj.type === 'textbox') {
+        activeObj.set('fontFamily', font);
+        document.fonts.ready.then(() => {
+          activeObj.initDimensions();
+          canvas.renderAll();
+        });
+        saveState();
+        showStatus(`🔤 Fonte alterada para ${font}`);
+      }
+    }
+
+    function toggleBold() {
+      isBoldActive = !isBoldActive;
+      document.getElementById('btnBold').classList.toggle('active', isBoldActive);
+
+      const activeObj = canvas.getActiveObject();
+      if (activeObj && activeObj.type === 'textbox') {
+        activeObj.set('fontWeight', isBoldActive ? 'bold' : 'normal');
+        canvas.renderAll();
+        saveState();
+        showStatus(isBoldActive ? '<b>B</b> Negrito ativado' : 'Negrito desativado');
+      }
+    }
+
+    function setTextAlignment(align) {
+      currentTextAlign = align;
+
+      document.getElementById('btnAlignLeft').classList.toggle('active', align === 'left');
+      document.getElementById('btnAlignCenter').classList.toggle('active', align === 'center');
+      document.getElementById('btnAlignRight').classList.toggle('active', align === 'right');
+
+      const activeObj = canvas.getActiveObject();
+      if (activeObj && activeObj.type === 'textbox') {
+        activeObj.set('textAlign', align);
+        canvas.renderAll();
+        saveState();
+      }
+    }
+
+    canvas.on('selection:created', checkSelectedTextProperties);
+    canvas.on('selection:updated', checkSelectedTextProperties);
+
+    function checkSelectedTextProperties() {
+      const activeObj = canvas.getActiveObject();
+      if (activeObj && activeObj.type === 'textbox') {
+        document.getElementById('fontSelect').value = activeObj.fontFamily || 'Nunito';
+        
+        isBoldActive = (activeObj.fontWeight === 'bold' || activeObj.fontWeight === '700' || activeObj.fontWeight === 700);
+        document.getElementById('btnBold').classList.toggle('active', isBoldActive);
+
+        currentTextAlign = activeObj.textAlign || 'left';
+        document.getElementById('btnAlignLeft').classList.toggle('active', currentTextAlign === 'left');
+        document.getElementById('btnAlignCenter').classList.toggle('active', currentTextAlign === 'center');
+        document.getElementById('btnAlignRight').classList.toggle('active', currentTextAlign === 'right');
+      }
+    }
+
+    // -------------------------------------------------------------
+    // FERRAMENTAS E MÃO
     // -------------------------------------------------------------
     function updateEraserSize(val) {
       document.getElementById('eraserSizeVal').innerText = val + 'px';
@@ -625,7 +748,11 @@
 
     function setActiveTool(tool) {
       currentTool = tool;
-      document.querySelectorAll('.toolbar button').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.toolbar button').forEach(btn => {
+        if (!['btnBold', 'btnAlignLeft', 'btnAlignCenter', 'btnAlignRight', 'btnGrid'].includes(btn.id)) {
+          btn.classList.remove('active');
+        }
+      });
 
       canvas.isDrawingMode = false;
 
@@ -668,18 +795,18 @@
 
         setObjectsInteractive(false);
         canvas.renderAll();
-        showStatus('🧹 Borracha ativa no objeto verde! Passa a borracha na zona a apagar.');
+        showStatus('🧹 Borracha ativa no objeto verde!');
       } else if (tool === 'path') {
         document.getElementById('btnPath').classList.add('active');
         canvas.selection = false;
         canvas.defaultCursor = 'crosshair';
         setObjectsInteractive(false);
-        showStatus('📐 Modo Pen: Clica no canvas para adicionar pontos ao caminho.');
+        showStatus('📐 Modo Pen: Clica no canvas para adicionar pontos.');
       } else if (tool === 'pencil') {
         document.getElementById('btnPencil').classList.add('active');
         canvas.isDrawingMode = true;
         const pencil = new fabric.PencilBrush(canvas);
-        pencil.color = document.getElementById('fillColor').value;
+        pencil.color = document.getElementById('fillColor').value || '#000000';
         pencil.width = 3;
         canvas.freeDrawingBrush = pencil;
         setObjectsInteractive(false);
@@ -733,14 +860,10 @@
       canvas.renderAll();
     }
 
-    // -------------------------------------------------------------
-    // PROCESSAMENTO DE SVGS E ESTILOS CSS NATIVOS
-    // -------------------------------------------------------------
     function prepareSVGWithStyles(svgString) {
       try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(svgString, 'image/svg+xml');
-
         const parserError = doc.querySelector('parsererror');
         if (parserError) return svgString;
 
@@ -927,7 +1050,7 @@
       if (activePathLine) canvas.remove(activePathLine);
       if (pathPoints.length < 2) return;
 
-      const strokeColor = document.getElementById('fillColor').value;
+      const strokeColor = document.getElementById('fillColor').value || '#000000';
 
       if (isClosed) {
         activePathLine = new fabric.Polygon(pathPoints, {
@@ -992,7 +1115,7 @@
     });
 
     // -------------------------------------------------------------
-    // RÉGUAS E GUIAS DE ALINHAMENTO
+    // RÉGUAS E GUIAS
     // -------------------------------------------------------------
     const rulerTopCanvas = document.getElementById('rulerTop');
     const rulerLeftCanvas = document.getElementById('rulerLeft');
@@ -1065,7 +1188,7 @@
 
       guide.ondblclick = () => guide.remove();
       document.getElementById('mainContainer').appendChild(guide);
-      showStatus('📏 Guia de alinhamento adicionada! (Duplo clique para remover)');
+      showStatus('📏 Guia de alinhamento adicionada!');
     }
 
     function clearGuides() {
@@ -1107,7 +1230,7 @@
       const path = new fabric.Path(pathData, {
         left: canvas.width / 2 - 20,
         top: canvas.height / 2 - 20,
-        fill: document.getElementById('fillColor').value,
+        fill: document.getElementById('fillColor').value || '#000000',
         scaleX: 2, scaleY: 2,
         cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
       });
@@ -1123,7 +1246,7 @@
       setActiveTool('select');
       const rect = new fabric.Rect({
         left: canvas.width / 2 - 50, top: canvas.height / 2 - 40,
-        fill: document.getElementById('fillColor').value,
+        fill: document.getElementById('fillColor').value || '#000000',
         width: 100, height: 80,
         cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
       });
@@ -1137,7 +1260,7 @@
       setActiveTool('select');
       const circle = new fabric.Circle({
         left: canvas.width / 2 - 40, top: canvas.height / 2 - 40,
-        fill: document.getElementById('fillColor').value,
+        fill: document.getElementById('fillColor').value || '#000000',
         radius: 40,
         cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
       });
@@ -1150,27 +1273,13 @@
     function addLine() {
       setActiveTool('select');
       const line = new fabric.Line([100, 100, 300, 100], {
-        stroke: document.getElementById('fillColor').value,
+        stroke: document.getElementById('fillColor').value || '#000000',
         strokeWidth: 4,
         cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
       });
       applyDashToObj(line);
       canvas.add(line);
       canvas.setActiveObject(line);
-      canvas.renderAll();
-      saveState();
-    }
-
-    function addText() {
-      setActiveTool('select');
-      const text = new fabric.Textbox('Novo Texto', {
-        left: canvas.width / 2 - 50, top: canvas.height / 2 - 15,
-        fill: document.getElementById('fillColor').value,
-        fontSize: 24,
-        cornerColor: '#0d9488', cornerStyle: 'circle', transparentCorners: false
-      });
-      canvas.add(text);
-      canvas.setActiveObject(text);
       canvas.renderAll();
       saveState();
     }
@@ -1421,7 +1530,7 @@
     });
 
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS E PASTAS DE ORGANIZAÇÃO
+    // PAINEL DE CAMADAS E PASTAS
     // -------------------------------------------------------------
     function createFolder() {
       const name = prompt('Nome da nova pasta:', `Pasta ${folders.length + 1}`);
@@ -1483,7 +1592,7 @@
           else if (obj.type === 'line') name = '➖ Linha';
           else if (obj.type === 'polyline') name = `📐 Path (${obj.points ? obj.points.length : 0} pts)`;
           else if (obj.type === 'polygon') name = `📐 Polígono (${obj.points ? obj.points.length : 0} pts)`;
-          else if (obj.type === 'textbox') name = '🔤 Texto';
+          else if (obj.type === 'textbox') name = `🔤 Texto (${obj.text ? obj.text.substring(0, 10) : ''})`;
           else if (obj.type === 'group') name = `📦 Grupo (${obj.getObjects().length} elem.)`;
           else if (obj.type === 'image') name = '🗺️ Mapa Vetorial Completo';
           else if (obj.type === 'path') name = '✏️ Path / Símbolo';
