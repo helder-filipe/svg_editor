@@ -184,6 +184,7 @@
       position: relative;
     }
 
+    /* BARRA LATERAL COM SISTEMA DE ABAS (ESTILO PHOTOSHOP) */
     .sidebar {
       width: 320px;
       background-color: #1e293b;
@@ -193,6 +194,41 @@
       padding: 12px;
       gap: 10px;
       z-index: 20;
+    }
+
+    .sidebar-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 6px;
+    }
+
+    .sidebar-tab {
+      flex: 1;
+      background-color: #0f172a;
+      color: #94a3b8;
+      border: 1px solid #334155;
+      padding: 6px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .sidebar-tab.active {
+      background-color: #0d9488;
+      color: #ffffff;
+      border-color: #14b8a6;
+    }
+
+    .tab-content {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+      overflow: hidden;
     }
 
     .sidebar-header {
@@ -236,13 +272,43 @@
       transition: width 0.1s ease;
     }
 
-    .layer-list {
+    .layer-list, .history-list {
       display: flex;
       flex-direction: column;
       gap: 4px;
       overflow-y: auto;
       flex: 1;
       scroll-behavior: smooth;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background-color: #334155;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      user-select: none;
+      transition: all 0.15s;
+    }
+
+    .history-item:hover {
+      background-color: #475569;
+    }
+
+    .history-item.active {
+      background-color: #0d9488;
+      color: #ffffff;
+      border-left-color: #38bdf8;
+      font-weight: 600;
+    }
+
+    .history-item.disabled {
+      opacity: 0.4;
+      background-color: #1e293b;
     }
 
     .folder-item {
@@ -485,25 +551,48 @@
       </div>
     </div>
 
+    <!-- BARRA LATERAL COM PAINEL DE HISTÓRICO (ESTILO PHOTOSHOP) -->
     <div class="sidebar">
-      <div class="sidebar-header">
-        <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
-        <button onclick="createFolder()" class="btn-icon" style="background-color: #334155; padding: 4px 8px;" title="Nova Pasta">📁 Criar Pasta</button>
+      <div class="sidebar-tabs">
+        <div class="sidebar-tab active" id="tabBtnLayers" onclick="switchSidebarTab('layers')">📁 Camadas</div>
+        <div class="sidebar-tab" id="tabBtnHistory" onclick="switchSidebarTab('history')">📜 Histórico</div>
       </div>
 
-      <div class="progress-box" id="progressBox">
-        <div style="display: flex; justify-content: space-between;">
-          <span id="progressText">A processar camadas...</span>
-          <span id="progressPercent">0%</span>
+      <!-- CONTEÚDO DE CAMADAS -->
+      <div class="tab-content" id="tabContentLayers">
+        <div class="sidebar-header">
+          <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
+          <button onclick="createFolder()" class="btn-icon" style="background-color: #334155; padding: 4px 8px;" title="Nova Pasta">📁 Criar Pasta</button>
         </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" id="progressBarFill"></div>
+
+        <div class="progress-box" id="progressBox">
+          <div style="display: flex; justify-content: space-between;">
+            <span id="progressText">A processar camadas...</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressBarFill"></div>
+          </div>
+        </div>
+
+        <div class="layer-list" id="layerList">
+          <div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">
+            Nenhum elemento no canvas
+          </div>
         </div>
       </div>
 
-      <div class="layer-list" id="layerList">
-        <div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">
-          Nenhum elemento no canvas
+      <!-- CONTEÚDO DE HISTÓRICO (PHOTOSHOP STYLE) -->
+      <div class="tab-content" id="tabContentHistory" style="display: none;">
+        <div class="sidebar-header">
+          <h3>Histórico de Alterações</h3>
+          <button onclick="clearHistory()" class="btn-icon" style="background-color: #334155; padding: 4px 8px;" title="Limpar Histórico">🗑️ Limpar</button>
+        </div>
+
+        <div class="history-list" id="historyList">
+          <div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">
+            Nenhuma alteração realizada
+          </div>
         </div>
       </div>
     </div>
@@ -548,59 +637,137 @@
     let isBoldActive = false;
 
     // -------------------------------------------------------------
-    // SISTEMA DE UNDO (HISTÓRICO) TOTALMENTE RESTRUTURADO
+    // SISTEMA DE UNDO ULTRA-LEVE POR DELTA (SEM DESERIALIZAÇÃO JSON)
     // -------------------------------------------------------------
-    const undoStack = [];
-    let isUndoRedoOperation = false;
-    const MAX_UNDO_LEVELS = 40;
+    const historyActions = [];
+    let isPerformingUndo = false;
 
-    function saveState() {
-      if (isBatchUpdating || isUndoRedoOperation) return;
+    function recordHistoryAction(label, undoCallback) {
+      if (isBatchUpdating || isPerformingUndo) return;
 
-      const strState = JSON.stringify(canvas.toJSON());
+      historyActions.push({
+        label: label,
+        undo: undoCallback,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      });
 
-      if (undoStack.length > 0 && undoStack[undoStack.length - 1] === strState) {
-        return;
+      if (historyActions.length > 30) {
+        historyActions.shift();
       }
 
-      undoStack.push(strState);
-
-      if (undoStack.length > MAX_UNDO_LEVELS) {
-        undoStack.shift();
-      }
+      updateHistoryPanel();
     }
 
     function undo() {
-      if (undoStack.length <= 1) {
+      if (historyActions.length === 0) {
         showStatus('⚠️ Sem mais ações para desfazer.');
         return;
       }
 
-      isUndoRedoOperation = true;
-      
-      // Remove o estado atual da pilha
-      undoStack.pop();
-      
-      // Pega o estado imediatamente anterior
-      const previousState = JSON.parse(undoStack[undoStack.length - 1]);
+      isPerformingUndo = true;
+      const action = historyActions.pop();
 
-      canvas.loadFromJSON(previousState, function () {
-        canvas.renderAll();
-        updateLayerPanel();
-        updateZoomIndicator();
-        drawRulers();
-        isUndoRedoOperation = false;
-        showStatus('↩️ Ação desfeita com sucesso!');
+      // Executa apenas a restauração da mutação específica do objeto
+      action.undo();
+
+      canvas.renderOnAddRemove = true;
+      canvas.requestRenderAll();
+      updateLayerPanel();
+      updateHistoryPanel();
+      isPerformingUndo = false;
+
+      showStatus(`↩️ Desfeito: "${action.label}"`);
+    }
+
+    function clearHistory() {
+      historyActions.length = 0;
+      updateHistoryPanel();
+      showStatus('🧹 Histórico limpo.');
+    }
+
+    function updateHistoryPanel() {
+      const listEl = document.getElementById('historyList');
+      if (!listEl) return;
+
+      listEl.innerHTML = '';
+
+      if (historyActions.length === 0) {
+        listEl.innerHTML = '<div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">Sem ações registadas</div>';
+        return;
+      }
+
+      [...historyActions].reverse().forEach((action, idx) => {
+        const item = document.createElement('div');
+        item.className = 'history-item' + (idx === 0 ? ' active' : '');
+
+        item.innerHTML = `
+          <span style="font-size: 12px;">⏱️</span>
+          <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <span>${action.label}</span>
+          </div>
+          <span style="font-size: 10px; opacity: 0.6;">${action.time}</span>
+        `;
+
+        listEl.appendChild(item);
       });
     }
 
-    // Grava o estado inicial
-    setTimeout(saveState, 200);
+    function switchSidebarTab(tab) {
+      document.getElementById('tabBtnLayers').classList.toggle('active', tab === 'layers');
+      document.getElementById('tabBtnHistory').classList.toggle('active', tab === 'history');
 
-    // Eventos do Canvas que ativam a gravação no Histórico
-    canvas.on('object:added', () => { saveState(); updateLayerPanel(); });
-    canvas.on('object:removed', () => { saveState(); updateLayerPanel(); });
-    canvas.on('object:modified', saveState);
+      document.getElementById('tabContentLayers').style.display = tab === 'layers' ? 'flex' : 'none';
+      document.getElementById('tabContentHistory').style.display = tab === 'history' ? 'flex' : 'none';
+    }
+
+    // Registo dinâmico das mutações de transformações (posição, tamanho, rotação)
+    let beforeState = null;
+    canvas.on('mouse:down', function(opt) {
+      if (opt.target && !isBatchUpdating && !isPerformingUndo) {
+        beforeState = {
+          left: opt.target.left,
+          top: opt.target.top,
+          scaleX: opt.target.scaleX,
+          scaleY: opt.target.scaleY,
+          angle: opt.target.angle,
+          fill: opt.target.fill,
+          stroke: opt.target.stroke
+        };
+      }
+    });
+
+    canvas.on('object:modified', function(opt) {
+      if (opt.target && beforeState && !isPerformingUndo) {
+        const target = opt.target;
+        const oldState = { ...beforeState };
+
+        recordHistoryAction(`Mover/Alterar ${target.customName || target.type}`, () => {
+          target.set(oldState);
+          target.setCoords();
+        });
+        beforeState = null;
+      }
+    });
+
+    canvas.on('object:added', function(opt) {
+      if (!isBatchUpdating && !isPerformingUndo) {
+        const target = opt.target;
+        recordHistoryAction(`Adicionar ${target.customName || target.type}`, () => {
+          canvas.remove(target);
+        });
+      }
+      updateLayerPanel();
+    });
+
+    canvas.on('object:removed', function(opt) {
+      if (!isBatchUpdating && !isPerformingUndo) {
+        const target = opt.target;
+        recordHistoryAction(`Eliminar ${target.customName || target.type}`, () => {
+          canvas.add(target);
+        });
+      }
+      updateLayerPanel();
+    });
 
     function saveToStorage() {
       try {
@@ -620,16 +787,16 @@
       }
 
       showStatus('⏳ A carregar projeto da cache...');
-      isUndoRedoOperation = true;
+      isPerformingUndo = true;
 
       canvas.loadFromJSON(savedData, function () {
         canvas.renderAll();
         updateLayerPanel();
         updateZoomIndicator();
         drawRulers();
-        undoStack.length = 0;
-        saveState();
-        isUndoRedoOperation = false;
+        historyActions.length = 0;
+        updateHistoryPanel();
+        isPerformingUndo = false;
         showStatus('📂 Projeto restaurado da cache!');
       });
     }
@@ -694,12 +861,21 @@
     function updateFontFamily(font) {
       const activeObj = canvas.getActiveObject();
       if (activeObj && activeObj.type === 'textbox') {
+        const oldFont = activeObj.fontFamily;
         activeObj.set('fontFamily', font);
+        
+        recordHistoryAction(`Fonte: ${font}`, () => {
+          activeObj.set('fontFamily', oldFont);
+          document.fonts.ready.then(() => {
+            activeObj.initDimensions();
+            canvas.renderAll();
+          });
+        });
+
         document.fonts.ready.then(() => {
           activeObj.initDimensions();
           canvas.renderAll();
         });
-        saveState();
         showStatus(`🔤 Fonte alterada para ${font}`);
       }
     }
@@ -710,9 +886,15 @@
 
       const activeObj = canvas.getActiveObject();
       if (activeObj && activeObj.type === 'textbox') {
+        const oldWeight = activeObj.fontWeight;
         activeObj.set('fontWeight', isBoldActive ? 'bold' : 'normal');
+
+        recordHistoryAction(isBoldActive ? 'Ativado Negrito' : 'Desativado Negrito', () => {
+          activeObj.set('fontWeight', oldWeight);
+          canvas.renderAll();
+        });
+
         canvas.renderAll();
-        saveState();
         showStatus(isBoldActive ? 'Negrito ativado' : 'Negrito desativado');
       }
     }
@@ -726,9 +908,15 @@
 
       const activeObj = canvas.getActiveObject();
       if (activeObj && activeObj.type === 'textbox') {
+        const oldAlign = activeObj.textAlign;
         activeObj.set('textAlign', align);
+
+        recordHistoryAction(`Alinhamento: ${align}`, () => {
+          activeObj.set('textAlign', oldAlign);
+          canvas.renderAll();
+        });
+
         canvas.renderAll();
-        saveState();
       }
     }
 
@@ -860,7 +1048,14 @@
 
         targetEraserObj.setCoords();
         canvas.requestRenderAll();
-        saveState();
+        
+        recordHistoryAction('Corte com Borracha', () => {
+          if (targetEraserObj.clipPath && targetEraserObj.clipPath._objects) {
+            targetEraserObj.clipPath._objects.pop();
+            targetEraserObj.setCoords();
+          }
+        });
+
         showStatus('🧹 Área apagada com sucesso!');
       }
     });
@@ -1009,7 +1204,7 @@
           });
 
           canvas.clear();
-          undoStack.length = 0;
+          historyActions.length = 0;
 
           canvas.add(img);
           canvas.setActiveObject(img);
@@ -1294,9 +1489,15 @@
     function updateStrokeStyle() {
       const activeObj = canvas.getActiveObject();
       if (activeObj) {
+        const oldDash = activeObj.strokeDashArray;
         applyDashToObj(activeObj);
+        
+        recordHistoryAction('Estilo do Traço Mudar', () => {
+          activeObj.set('strokeDashArray', oldDash);
+          canvas.renderAll();
+        });
+
         canvas.renderAll();
-        saveState();
       }
     }
 
@@ -1313,6 +1514,9 @@
       } else {
         const activeObj = canvas.getActiveObject();
         if (activeObj) {
+          const oldColor = activeObj.fill;
+          const oldStroke = activeObj.stroke;
+
           if (activeObj.type === 'activeSelection' || activeObj.type === 'group') {
             const objs = activeObj.getObjects ? activeObj.getObjects() : [];
             objs.forEach(obj => {
@@ -1323,114 +1527,138 @@
             if (activeObj.fill && activeObj.fill !== 'transparent') activeObj.set('fill', color);
             if (activeObj.stroke) activeObj.set('stroke', color);
           }
+
+          recordHistoryAction(`Cor alterada (${color})`, () => {
+            if (activeObj.fill && activeObj.fill !== 'transparent') activeObj.set('fill', oldColor);
+            if (activeObj.stroke) activeObj.set('stroke', oldStroke);
+            canvas.renderAll();
+          });
+
           canvas.renderAll();
-          saveState();
         }
       }
     }
 
     async function ungroupSelected() {
-  const activeObj = canvas.getActiveObject();
-  if (!activeObj) {
-    showStatus('⚠️ Seleciona primeiro a camada do mapa no canvas ou na lista.');
-    return;
-  }
-
-  // Desativa temporariamente a renderização e o histórico
-  isBatchUpdating = true;
-  canvas.renderOnAddRemove = false;
-
-  if (activeObj.type === 'image' && activeObj.rawSVGData) {
-    showStatus('⏳ A extrair 9.000 sub-camadas em modo ultra-rápido...');
-    updateProgress(10, 100, 'A processar vetores...');
-
-    const origScaleX = activeObj.scaleX || 1;
-    const origScaleY = activeObj.scaleY || 1;
-    const origLeft = activeObj.left;
-    const origTop = activeObj.top;
-
-    // Pausa para permitir que a mensagem apareça no ecrã antes de processar
-    await new Promise(r => setTimeout(r, 50));
-
-    fabric.loadSVGFromString(activeObj.rawSVGData, function (objects, options) {
-      if (!objects || objects.length === 0) {
-        showStatus('⚠️ Não foram encontradas sub-camadas.');
-        updateProgress(0, 0);
-        isBatchUpdating = false;
-        canvas.renderOnAddRemove = true;
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) {
+        showStatus('⚠️ Seleciona primeiro a camada do mapa no canvas ou na lista.');
         return;
       }
 
-      // 1. Remove a imagem do mapa principal
-      canvas.remove(activeObj);
+      isBatchUpdating = true;
+      canvas.renderOnAddRemove = false;
 
-      const offsetX = options.width / 2 || 0;
-      const offsetY = options.height / 2 || 0;
+      if (activeObj.type === 'image' && activeObj.rawSVGData) {
+        showStatus('⏳ A extrair 9.000 sub-camadas em modo ultra-rápido...');
+        updateProgress(10, 100, 'A processar vetores...');
 
-      // 2. Prepara as propriedades dos 9000 objetos em memória pura (super rápido)
-      for (let i = 0; i < objects.length; i++) {
-        const obj = objects[i];
-        if (obj) {
-          obj.scaleX *= origScaleX;
-          obj.scaleY *= origScaleY;
-          obj.left = origLeft + (obj.left - offsetX) * origScaleX;
-          obj.top = origTop + (obj.top - offsetY) * origScaleY;
-          obj.cornerColor = '#0d9488';
-          obj.cornerStyle = 'circle';
-          obj.transparentCorners = false;
-          obj.objectCaching = true; // Essencial para performance em mapas gigantes
-          obj.canvas = canvas; // Atribui o canvas diretamente
+        const origScaleX = activeObj.scaleX || 1;
+        const origScaleY = activeObj.scaleY || 1;
+        const origLeft = activeObj.left;
+        const origTop = activeObj.top;
+
+        await new Promise(r => setTimeout(r, 50));
+
+        fabric.loadSVGFromString(activeObj.rawSVGData, function (objects, options) {
+          if (!objects || objects.length === 0) {
+            showStatus('⚠️ Não foram encontradas sub-camadas.');
+            updateProgress(0, 0);
+            isBatchUpdating = false;
+            canvas.renderOnAddRemove = true;
+            return;
+          }
+
+          canvas.remove(activeObj);
+
+          const offsetX = options.width / 2 || 0;
+          const offsetY = options.height / 2 || 0;
+          const addedSubLayers = [];
+
+          for (let i = 0; i < objects.length; i++) {
+            const obj = objects[i];
+            if (obj) {
+              obj.scaleX *= origScaleX;
+              obj.scaleY *= origScaleY;
+              obj.left = origLeft + (obj.left - offsetX) * origScaleX;
+              obj.top = origTop + (obj.top - offsetY) * origScaleY;
+              obj.cornerColor = '#0d9488';
+              obj.cornerStyle = 'circle';
+              obj.transparentCorners = false;
+              obj.objectCaching = true;
+              obj.canvas = canvas;
+              
+              canvas._objects.push(obj);
+              addedSubLayers.push(obj);
+            }
+          }
+
+          canvas.renderOnAddRemove = true;
+          isBatchUpdating = false;
+
+          // UNDO INSTANTÂNEO DIRETO NA MEMÓRIA DA LISTA DE OBJETOS
+          recordHistoryAction(`Desagrupar Mapa (${addedSubLayers.length} camadas)`, () => {
+            canvas.renderOnAddRemove = false;
+            canvas._objects = canvas._objects.filter(o => !addedSubLayers.includes(o));
+            canvas.add(activeObj);
+            canvas.setActiveObject(activeObj);
+            canvas.renderOnAddRemove = true;
+          });
+
+          updateProgress(100, 100, 'A renderizar mapa...');
           
-          // Injeta diretamente na estrutura interna sem disparar eventos do Fabric.js
-          canvas._objects.push(obj);
-        }
+          canvas.requestRenderAll();
+          updateLayerPanel();
+
+          showStatus(`🔓 Desagrupado com sucesso! (${addedSubLayers.length} sub-camadas)`);
+        });
+        return;
       }
 
-      // 3. Reativa a renderização e atualiza o estado
-      canvas.renderOnAddRemove = true;
-      isBatchUpdating = false;
+      if (activeObj.type === 'group') {
+        const items = activeObj.getObjects();
+        activeObj._restoreObjectsState();
+        canvas.remove(activeObj);
 
-      updateProgress(100, 100, 'A renderizar mapa...');
-      
-      // Renderiza a tela e o painel de camadas uma única vez
-      canvas.requestRenderAll();
-      updateLayerPanel();
+        items.forEach(item => {
+          item.set({
+            cornerColor: '#0d9488',
+            cornerStyle: 'circle',
+            transparentCorners: false,
+            objectCaching: true
+          });
+          canvas.add(item);
+        });
 
-      // 4. Grava APENAS 1 ESTADO na pilha de Undo
-      saveState();
+        recordHistoryAction('Desagrupar Elemento', () => {
+          items.forEach(i => canvas.remove(i));
+          canvas.add(activeObj);
+        });
 
-      showStatus(`🔓 Desagrupado com sucesso! (${objects.length} sub-camadas)`);
-    });
-    return;
-  }
+        isBatchUpdating = false;
+        canvas.renderOnAddRemove = true;
+        canvas.requestRenderAll();
+        updateLayerPanel();
+        showStatus(`🔓 Desagrupado com sucesso!`);
+      } else {
+        isBatchUpdating = false;
+        canvas.renderOnAddRemove = true;
+        showStatus('💡 Esta camada já é um elemento individual.');
+      }
+    }
 
-  if (activeObj.type === 'group') {
-    const items = activeObj.getObjects();
-    activeObj._restoreObjectsState();
-    canvas.remove(activeObj);
+    function copySelected() {
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) {
+        showStatus('⚠️ Nenhuma camada selecionada para copiar.');
+        return;
+      }
 
-    items.forEach(item => {
-      item.set({
-        cornerColor: '#0d9488',
-        cornerStyle: 'circle',
-        transparentCorners: false,
-        objectCaching: true
-      });
-      canvas.add(item);
-    });
-
-    isBatchUpdating = false;
-    canvas.renderOnAddRemove = true;
-    canvas.requestRenderAll();
-    updateLayerPanel();
-    saveState();
-    showStatus(`🔓 Desagrupado com sucesso!`);
-  } else {
-    isBatchUpdating = false;
-    canvas.renderOnAddRemove = true;
-    showStatus('💡 Esta camada já é um elemento individual.');
-  }
-}
+      activeObj.clone(function (cloned) {
+        clipboard = cloned;
+        showStatus('📋 Camada copiada para a área de transferência.');
+      }, CUSTOM_PROPS);
+    }
 
     function cutSelected() {
       const activeObj = canvas.getActiveObject();
@@ -1444,7 +1672,6 @@
       canvas.discardActiveObject();
       canvas.renderAll();
       updateLayerPanel();
-      saveState();
       showStatus('✂️ Camada recortada.');
     }
 
@@ -1486,9 +1713,8 @@
         canvas.setActiveObject(clonedObj);
         canvas.renderAll();
         updateLayerPanel();
-        saveState();
         showStatus('📌 Camada colada com sucesso!');
-      });
+      }, CUSTOM_PROPS);
     }
 
     function deleteSelected() {
@@ -1498,15 +1724,13 @@
         canvas.discardActiveObject();
         canvas.renderAll();
         updateLayerPanel();
-        saveState();
       }
     }
 
     // -------------------------------------------------------------
-    // CAPTURA DE ATALHOS DE TECLADO (CTRL+Z COMPATÍVEL)
+    // CAPTURA DE ATALHOS DE TECLADO (CTRL+Z INTEGRADO NO HISTÓRICO)
     // -------------------------------------------------------------
     window.addEventListener('keydown', function (e) {
-      // Se o utilizador estiver a escrever num input ou a editar um texto no canvas, ignora o atalho global
       const targetTag = e.target.tagName.toLowerCase();
       const activeObj = canvas.getActiveObject();
       if (targetTag === 'input' || targetTag === 'textarea' || targetTag === 'select' || (activeObj && activeObj.isEditing)) {
@@ -1550,6 +1774,10 @@
       if (name) {
         folders.push({ id: 'folder_' + Date.now(), name: name, open: true });
         updateLayerPanel();
+        recordHistoryAction(`Criada Pasta: ${name}`, () => {
+          const idx = folders.findIndex(f => f.name === name);
+          if (idx !== -1) folders.splice(idx, 1);
+        });
         showStatus('📁 Pasta criada!');
       }
     }
@@ -1662,26 +1890,45 @@
     function renameFolder(id) {
       const f = folders.find(f => f.id === id);
       if (f) {
+        const oldName = f.name;
         const newName = prompt('Novo nome para a pasta:', f.name);
-        if (newName) { f.name = newName; updateLayerPanel(); }
+        if (newName) { 
+          f.name = newName; 
+          updateLayerPanel();
+          recordHistoryAction(`Pasta renomeada: ${newName}`, () => {
+            f.name = oldName;
+            updateLayerPanel();
+          });
+        }
       }
     }
 
     function deleteFolder(id) {
       const idx = folders.findIndex(f => f.id === id);
       if (idx !== -1) {
+        const removedFolder = folders[idx];
         canvas.getObjects().forEach(o => { if (o.folderId === id) delete o.folderId; });
         folders.splice(idx, 1);
         updateLayerPanel();
+
+        recordHistoryAction('Pasta eliminada', () => {
+          folders.push(removedFolder);
+          updateLayerPanel();
+        });
       }
     }
 
     function moveObjToFolder(objIdx, folderId) {
       const obj = canvas.getObjects()[objIdx];
       if (obj) {
+        const oldFolderId = obj.folderId;
         obj.folderId = folderId || null;
         updateLayerPanel();
-        saveState();
+
+        recordHistoryAction('Mover para Pasta', () => {
+          obj.folderId = oldFolderId;
+          updateLayerPanel();
+        });
       }
     }
 
@@ -1695,7 +1942,12 @@
         if (newName !== null && newName.trim() !== '') {
           obj.customName = newName.trim();
           updateLayerPanel();
-          saveState();
+
+          recordHistoryAction(`Camada renomeada: ${newName}`, () => {
+            obj.customName = currentName;
+            updateLayerPanel();
+          });
+
           showStatus('🏷️ Camada renomeada!');
         }
       }
@@ -1712,6 +1964,12 @@
         }
         canvas.renderAll();
         updateLayerPanel();
+
+        recordHistoryAction('Visibilidade alterada', () => {
+          obj.visible = !obj.visible;
+          canvas.renderAll();
+          updateLayerPanel();
+        });
       }
     }
 
