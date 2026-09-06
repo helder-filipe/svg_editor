@@ -1813,7 +1813,7 @@
 
       const activeObj = canvas.getActiveObject() || targetEraserObj;
 
-      let html = `<div style="height: ${totalHeight}px; position: relative; width: 100%;">`;
+      let html = `<div style="height: ${totalHeight}px; position: relative; width: 100%; flex-shrink: 0;">`;
 
       for (let idx = startIndex; idx < endIndex; idx++) {
         const obj = virtualObjectsList[idx];
@@ -1885,7 +1885,11 @@
           const layerList = document.getElementById('layerList');
           if (layerList) {
             const targetScrollTop = virtualIndex * ITEM_HEIGHT - (layerList.clientHeight / 2);
+            const oldScrollBehavior = layerList.style.scrollBehavior;
+            layerList.style.scrollBehavior = 'auto';
             layerList.scrollTop = Math.max(0, targetScrollTop);
+            layerList.style.scrollBehavior = oldScrollBehavior;
+            renderVirtualLayers();
           }
         }
       }
