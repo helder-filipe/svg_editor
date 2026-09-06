@@ -184,7 +184,6 @@
       position: relative;
     }
 
-    /* BARRA LATERAL COM SISTEMA DE ABAS (ESTILO PHOTOSHOP) */
     .sidebar {
       width: 320px;
       background-color: #1e293b;
@@ -306,11 +305,6 @@
       font-weight: 600;
     }
 
-    .history-item.disabled {
-      opacity: 0.4;
-      background-color: #1e293b;
-    }
-
     .folder-item {
       background-color: #1e293b;
       border: 1px solid #475569;
@@ -352,6 +346,7 @@
       cursor: pointer;
       border: 1px solid transparent;
       user-select: none;
+      height: 32px;
     }
 
     .layer-item:hover { border-color: #0d9488; }
@@ -462,7 +457,6 @@
     <button onclick="addLine()">➖ Linha</button>
     <button onclick="addText()">🔤 Texto</button>
 
-    <!-- PAINEL DE CONTROLO DE TEXTO -->
     <div class="text-subtools">
       <select id="fontSelect" onchange="updateFontFamily(this.value)" style="background-color: #0f172a; color: #38bdf8; font-weight: bold; border-color: #38bdf8;">
         <option value="Nunito" selected>🔤 Nunito (Logótipo)</option>
@@ -518,7 +512,7 @@
 
     <div class="separator"></div>
 
-    <!-- BOTÃO UNDO ATUALIZADO -->
+    <!-- BOTÃO UNDO -->
     <button id="btnUndo" onclick="undo()" title="Desfazer Última Ação (Ctrl+Z)" style="background-color: #d97706; border-color: #f59e0b;">↩️ Undo</button>
     <button onclick="cutSelected()" title="Recortar Camada (Ctrl+X)">📋 Cortar</button>
     <button onclick="copySelected()" title="Copiar Camada (Ctrl+C)">📄 Copiar</button>
@@ -551,14 +545,12 @@
       </div>
     </div>
 
-    <!-- BARRA LATERAL COM PAINEL DE HISTÓRICO (ESTILO PHOTOSHOP) -->
     <div class="sidebar">
       <div class="sidebar-tabs">
         <div class="sidebar-tab active" id="tabBtnLayers" onclick="switchSidebarTab('layers')">📁 Camadas</div>
         <div class="sidebar-tab" id="tabBtnHistory" onclick="switchSidebarTab('history')">📜 Histórico</div>
       </div>
 
-      <!-- CONTEÚDO DE CAMADAS -->
       <div class="tab-content" id="tabContentLayers">
         <div class="sidebar-header">
           <h3>Estrutura de Camadas (<span id="layerCount">0</span>)</h3>
@@ -575,14 +567,13 @@
           </div>
         </div>
 
-        <div class="layer-list" id="layerList">
+        <div class="layer-list" id="layerList" onscroll="onLayerListScroll()">
           <div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">
             Nenhum elemento no canvas
           </div>
         </div>
       </div>
 
-      <!-- CONTEÚDO DE HISTÓRICO (PHOTOSHOP STYLE) -->
       <div class="tab-content" id="tabContentHistory" style="display: none;">
         <div class="sidebar-header">
           <h3>Histórico de Alterações</h3>
@@ -601,7 +592,6 @@
   <div class="status-msg" id="statusMsg"></div>
 
   <script>
-    // Configuração para incluir propriedades personalizadas na serialização global
     const CUSTOM_PROPS = ['rawSVGData', 'customName', 'folderId', 'fontFamily', 'textAlign', 'fontWeight'];
     
     fabric.Object.prototype.toObject = (function (toObject) {
@@ -610,15 +600,21 @@
       };
     })(fabric.Object.prototype.toObject);
 
+    // CANVAS DE ELEVADA VELOCIDADE (Hit-testing simplificado)
     const canvas = new fabric.Canvas('vectorCanvas', {
       isDrawingMode: false,
       selection: true,
-      preserveObjectStacking: true,
+      // preserveObjectStacking desativado: com muitos objetos (ex: mapa desagrupado
+      // em centenas/milhares de sub-camadas), manter esta opção a true obriga o Fabric
+      // a redesenhar TODOS os objetos a cada frame durante a seleção/arrasto, em vez de
+      // usar o caminho rápido (desenhar só o objeto ativo sobre um snapshot do resto).
+      // Isto era a principal causa do travamento ao selecionar/mover objetos.
+      preserveObjectStacking: false,
       renderOnAddRemove: false,
       subTargetCheck: false,
       enableRetinaScaling: false,
-      perPixelTargetFind: true,
-      targetFindTolerance: 3
+      perPixelTargetFind: false,
+      targetFindTolerance: 6
     });
 
     let currentTool = 'select';
@@ -637,7 +633,7 @@
     let isBoldActive = false;
 
     // -------------------------------------------------------------
-    // SISTEMA DE UNDO ULTRA-LEVE POR DELTA (SEM DESERIALIZAÇÃO JSON)
+    // SISTEMA DE UNDO LEVE POR MUTATION
     // -------------------------------------------------------------
     const historyActions = [];
     let isPerformingUndo = false;
@@ -667,7 +663,6 @@
       isPerformingUndo = true;
       const action = historyActions.pop();
 
-      // Executa apenas a restauração da mutação específica do objeto
       action.undo();
 
       canvas.renderOnAddRemove = true;
@@ -720,7 +715,6 @@
       document.getElementById('tabContentHistory').style.display = tab === 'history' ? 'flex' : 'none';
     }
 
-    // Registo dinâmico das mutações de transformações (posição, tamanho, rotação)
     let beforeState = null;
     canvas.on('mouse:down', function(opt) {
       if (opt.target && !isBatchUpdating && !isPerformingUndo) {
@@ -790,7 +784,7 @@
       isPerformingUndo = true;
 
       canvas.loadFromJSON(savedData, function () {
-        canvas.renderAll();
+        canvas.requestRenderAll();
         updateLayerPanel();
         updateZoomIndicator();
         drawRulers();
@@ -828,7 +822,7 @@
     }
 
     // -------------------------------------------------------------
-    // GESTÃO DE TEXTO, FONTE, NEGRITO E ALINHAMENTO
+    // CONTROLO DE TEXTO E FERRAMENTAS
     // -------------------------------------------------------------
     function addText() {
       setActiveTool('select');
@@ -852,7 +846,7 @@
 
       document.fonts.ready.then(() => {
         text.initDimensions();
-        canvas.renderAll();
+        canvas.requestRenderAll();
       });
 
       showStatus(`🔤 Texto adicionado!`);
@@ -868,13 +862,13 @@
           activeObj.set('fontFamily', oldFont);
           document.fonts.ready.then(() => {
             activeObj.initDimensions();
-            canvas.renderAll();
+            canvas.requestRenderAll();
           });
         });
 
         document.fonts.ready.then(() => {
           activeObj.initDimensions();
-          canvas.renderAll();
+          canvas.requestRenderAll();
         });
         showStatus(`🔤 Fonte alterada para ${font}`);
       }
@@ -891,10 +885,10 @@
 
         recordHistoryAction(isBoldActive ? 'Ativado Negrito' : 'Desativado Negrito', () => {
           activeObj.set('fontWeight', oldWeight);
-          canvas.renderAll();
+          canvas.requestRenderAll();
         });
 
-        canvas.renderAll();
+        canvas.requestRenderAll();
         showStatus(isBoldActive ? 'Negrito ativado' : 'Negrito desativado');
       }
     }
@@ -913,10 +907,10 @@
 
         recordHistoryAction(`Alinhamento: ${align}`, () => {
           activeObj.set('textAlign', oldAlign);
-          canvas.renderAll();
+          canvas.requestRenderAll();
         });
 
-        canvas.renderAll();
+        canvas.requestRenderAll();
       }
     }
 
@@ -938,9 +932,6 @@
       }
     }
 
-    // -------------------------------------------------------------
-    // FERRAMENTAS E MÃO
-    // -------------------------------------------------------------
     function updateEraserSize(val) {
       document.getElementById('eraserSizeVal').innerText = val + 'px';
       if (currentTool === 'eraser' && canvas.freeDrawingBrush) {
@@ -968,6 +959,7 @@
           targetEraserObj = null;
         }
         setObjectsInteractive(true);
+
       } else if (tool === 'hand') {
         document.getElementById('btnHand').classList.add('active');
         canvas.selection = false;
@@ -997,7 +989,7 @@
         canvas.freeDrawingBrush = eraserBrush;
 
         setObjectsInteractive(false);
-        canvas.renderAll();
+        canvas.requestRenderAll();
         showStatus('🧹 Borracha ativa no objeto verde!');
       } else if (tool === 'path') {
         document.getElementById('btnPath').classList.add('active');
@@ -1065,7 +1057,7 @@
         obj.selectable = enable;
         obj.evented = enable;
       });
-      canvas.renderAll();
+      canvas.requestRenderAll();
     }
 
     function prepareSVGWithStyles(svgString) {
@@ -1208,7 +1200,7 @@
 
           canvas.add(img);
           canvas.setActiveObject(img);
-          canvas.renderAll();
+          canvas.requestRenderAll();
 
           setActiveTool('select');
           updateLayerPanel();
@@ -1281,7 +1273,7 @@
 
       applyDashToObj(activePathLine);
       canvas.add(activePathLine);
-      canvas.renderAll();
+      canvas.requestRenderAll();
     }
 
     function closeCurrentPath() {
@@ -1309,7 +1301,7 @@
         activePathLine = null;
       }
       pathPoints = [];
-      canvas.renderAll();
+      canvas.requestRenderAll();
       updateLayerPanel();
       showStatus('❌ Caminho cancelado.');
     }
@@ -1409,9 +1401,9 @@
       if (showGrid) {
         canvas.setBackgroundColor({
           source: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="none"/><path d="M 20 0 L 0 0 0 20" fill="none" stroke="%23cbd5e1" stroke-width="0.5"/></svg>'
-        }, canvas.renderAll.bind(canvas));
+        }, canvas.requestRenderAll.bind(canvas));
       } else {
-        canvas.setBackgroundColor('#ffffff', canvas.renderAll.bind(canvas));
+        canvas.setBackgroundColor('#ffffff', canvas.requestRenderAll.bind(canvas));
       }
     }
 
@@ -1443,7 +1435,7 @@
 
       canvas.add(path);
       canvas.setActiveObject(path);
-      canvas.renderAll();
+      canvas.requestRenderAll();
       document.getElementById('symbolSelect').value = '';
     }
 
@@ -1457,7 +1449,7 @@
       });
       canvas.add(rect);
       canvas.setActiveObject(rect);
-      canvas.renderAll();
+      canvas.requestRenderAll();
     }
 
     function addCircle() {
@@ -1470,7 +1462,7 @@
       });
       canvas.add(circle);
       canvas.setActiveObject(circle);
-      canvas.renderAll();
+      canvas.requestRenderAll();
     }
 
     function addLine() {
@@ -1483,7 +1475,7 @@
       applyDashToObj(line);
       canvas.add(line);
       canvas.setActiveObject(line);
-      canvas.renderAll();
+      canvas.requestRenderAll();
     }
 
     function updateStrokeStyle() {
@@ -1494,10 +1486,10 @@
         
         recordHistoryAction('Estilo do Traço Mudar', () => {
           activeObj.set('strokeDashArray', oldDash);
-          canvas.renderAll();
+          canvas.requestRenderAll();
         });
 
-        canvas.renderAll();
+        canvas.requestRenderAll();
       }
     }
 
@@ -1531,10 +1523,10 @@
           recordHistoryAction(`Cor alterada (${color})`, () => {
             if (activeObj.fill && activeObj.fill !== 'transparent') activeObj.set('fill', oldColor);
             if (activeObj.stroke) activeObj.set('stroke', oldStroke);
-            canvas.renderAll();
+            canvas.requestRenderAll();
           });
 
-          canvas.renderAll();
+          canvas.requestRenderAll();
         }
       }
     }
@@ -1550,7 +1542,7 @@
       canvas.renderOnAddRemove = false;
 
       if (activeObj.type === 'image' && activeObj.rawSVGData) {
-        showStatus('⏳ A extrair 9.000 sub-camadas em modo ultra-rápido...');
+        showStatus('⏳ A extrair sub-camadas...');
         updateProgress(10, 100, 'A processar vetores...');
 
         const origScaleX = activeObj.scaleX || 1;
@@ -1589,6 +1581,7 @@
               obj.canvas = canvas;
               
               canvas._objects.push(obj);
+              obj.setCoords();
               addedSubLayers.push(obj);
             }
           }
@@ -1596,7 +1589,6 @@
           canvas.renderOnAddRemove = true;
           isBatchUpdating = false;
 
-          // UNDO INSTANTÂNEO DIRETO NA MEMÓRIA DA LISTA DE OBJETOS
           recordHistoryAction(`Desagrupar Mapa (${addedSubLayers.length} camadas)`, () => {
             canvas.renderOnAddRemove = false;
             canvas._objects = canvas._objects.filter(o => !addedSubLayers.includes(o));
@@ -1620,6 +1612,10 @@
         activeObj._restoreObjectsState();
         canvas.remove(activeObj);
 
+        // Lote: adiciona os itens diretamente ao array interno, sem disparar
+        // 'object:added' por cada um (o que rebentaria o painel de camadas e o
+        // histórico N vezes seguidas para grupos com muitos elementos).
+        isBatchUpdating = true;
         items.forEach(item => {
           item.set({
             cornerColor: '#0d9488',
@@ -1627,15 +1623,20 @@
             transparentCorners: false,
             objectCaching: true
           });
-          canvas.add(item);
+          item.canvas = canvas;
+          canvas._objects.push(item);
+          item.setCoords();
         });
+        isBatchUpdating = false;
 
         recordHistoryAction('Desagrupar Elemento', () => {
-          items.forEach(i => canvas.remove(i));
+          isBatchUpdating = true;
+          canvas._objects = canvas._objects.filter(o => !items.includes(o));
           canvas.add(activeObj);
+          isBatchUpdating = false;
+          updateLayerPanel();
         });
 
-        isBatchUpdating = false;
         canvas.renderOnAddRemove = true;
         canvas.requestRenderAll();
         updateLayerPanel();
@@ -1670,7 +1671,7 @@
       copySelected();
       canvas.remove(activeObj);
       canvas.discardActiveObject();
-      canvas.renderAll();
+      canvas.requestRenderAll();
       updateLayerPanel();
       showStatus('✂️ Camada recortada.');
     }
@@ -1696,10 +1697,17 @@
 
         if (clonedObj.type === 'activeSelection') {
           clonedObj.canvas = canvas;
+          // Lote: evita disparar 'object:added' (histórico + painel de camadas)
+          // uma vez por cada objeto colado quando se cola uma seleção múltipla.
+          isBatchUpdating = true;
           clonedObj.forEachObject(function (obj) {
-            canvas.add(obj);
+            obj.canvas = canvas;
+            canvas._objects.push(obj);
+            obj.setCoords();
           });
+          isBatchUpdating = false;
           clonedObj.setCoords();
+          updateLayerPanel();
         } else {
           if (clipboard.customName) {
             clonedObj.customName = clipboard.customName + ' (Cópia)';
@@ -1711,7 +1719,7 @@
         clipboard.left += 10;
 
         canvas.setActiveObject(clonedObj);
-        canvas.renderAll();
+        canvas.requestRenderAll();
         updateLayerPanel();
         showStatus('📌 Camada colada com sucesso!');
       }, CUSTOM_PROPS);
@@ -1722,14 +1730,11 @@
       if (activeObjects.length) {
         activeObjects.forEach(obj => canvas.remove(obj));
         canvas.discardActiveObject();
-        canvas.renderAll();
+        canvas.requestRenderAll();
         updateLayerPanel();
       }
     }
 
-    // -------------------------------------------------------------
-    // CAPTURA DE ATALHOS DE TECLADO (CTRL+Z INTEGRADO NO HISTÓRICO)
-    // -------------------------------------------------------------
     window.addEventListener('keydown', function (e) {
       const targetTag = e.target.tagName.toLowerCase();
       const activeObj = canvas.getActiveObject();
@@ -1767,20 +1772,10 @@
     });
 
     // -------------------------------------------------------------
-    // PAINEL DE CAMADAS E PASTAS
+    // SISTEMA DE VIRTUALIZAÇÃO DE CAMADAS (TODAS EXPOSTAS SEM TRAVAR)
     // -------------------------------------------------------------
-    function createFolder() {
-      const name = prompt('Nome da nova pasta:', `Pasta ${folders.length + 1}`);
-      if (name) {
-        folders.push({ id: 'folder_' + Date.now(), name: name, open: true });
-        updateLayerPanel();
-        recordHistoryAction(`Criada Pasta: ${name}`, () => {
-          const idx = folders.findIndex(f => f.name === name);
-          if (idx !== -1) folders.splice(idx, 1);
-        });
-        showStatus('📁 Pasta criada!');
-      }
-    }
+    const ITEM_HEIGHT = 36;
+    let virtualObjectsList = [];
 
     function updateLayerPanel() {
       if (isBatchUpdating) return;
@@ -1788,43 +1783,45 @@
       const layerList = document.getElementById('layerList');
       const objects = canvas.getObjects();
       document.getElementById('layerCount').innerText = objects.length;
-      layerList.innerHTML = '';
 
-      if (objects.length === 0 && folders.length === 0) {
+      virtualObjectsList = [...objects].reverse();
+
+      if (virtualObjectsList.length === 0 && folders.length === 0) {
         layerList.innerHTML = '<div style="font-size: 11px; color: #64748b; text-align: center; margin-top: 20px;">Nenhum elemento no canvas</div>';
         return;
       }
 
-      folders.forEach(folder => {
-        const folderEl = document.createElement('div');
-        folderEl.className = 'folder-item';
+      renderVirtualLayers();
+    }
 
-        folderEl.innerHTML = `
-          <div class="folder-header">
-            <span onclick="toggleFolder('${folder.id}')">📁 ${folder.name}</span>
-            <div>
-              <button class="btn-icon" onclick="renameFolder('${folder.id}')">✏️</button>
-              <button class="btn-icon" onclick="deleteFolder('${folder.id}')">🗑️</button>
-            </div>
-          </div>
-          <div class="folder-content" id="${folder.id}" style="display: ${folder.open ? 'flex' : 'none'};"></div>
-        `;
-        layerList.appendChild(folderEl);
-      });
+    function onLayerListScroll() {
+      requestAnimationFrame(renderVirtualLayers);
+    }
 
-      const activeObject = canvas.getActiveObject() || targetEraserObj;
+    function renderVirtualLayers() {
+      const layerList = document.getElementById('layerList');
+      if (!layerList) return;
 
-      [...objects].reverse().forEach((obj, idx) => {
-        const item = document.createElement('div');
+      const scrollTop = layerList.scrollTop;
+      const containerHeight = layerList.clientHeight || 500;
+
+      const totalItems = virtualObjectsList.length;
+      const totalHeight = totalItems * ITEM_HEIGHT;
+
+      const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 3);
+      const endIndex = Math.min(totalItems, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + 3);
+
+      const activeObj = canvas.getActiveObject() || targetEraserObj;
+
+      let html = `<div style="height: ${totalHeight}px; position: relative; width: 100%;">`;
+
+      for (let idx = startIndex; idx < endIndex; idx++) {
+        const obj = virtualObjectsList[idx];
+        const realIndex = virtualObjectsList.length - 1 - idx;
+        const topPos = idx * ITEM_HEIGHT;
+
         const isPathObj = ['polyline', 'polygon', 'path'].includes(obj.type);
-        const realIndex = objects.length - 1 - idx;
-
-        item.className = 'layer-item' + (isPathObj ? ' is-path' : '');
-
-        const isSelected = activeObject === obj || (activeObject && activeObject.type === 'activeSelection' && activeObject.contains && activeObject.contains(obj));
-        if (isSelected) {
-          item.classList.add('active');
-        }
+        const isSelected = activeObj === obj;
 
         let name = obj.customName;
         if (!name) {
@@ -1837,98 +1834,73 @@
           else if (obj.type === 'group') name = `📦 Grupo (${obj.getObjects().length} elem.)`;
           else if (obj.type === 'image') name = '🗺️ Mapa Vetorial Completo';
           else if (obj.type === 'path') name = '✏️ Path / Símbolo';
-          else name = 'Sub-camada Vetorial';
+          else name = `Sub-camada #${realIndex}`;
         }
 
         const isVisible = obj.visible !== false;
 
-        item.innerHTML = `
-          <div class="layer-info">
-            <span title="Duplo clique para renomear" ondblclick="renameLayer(event, ${realIndex})">${name}</span>
-          </div>
-          <div class="layer-actions">
-            <select style="font-size: 10px; padding: 2px; background-color: #1e293b; color: #fff; border: 1px solid #475569; border-radius: 3px;" onchange="moveObjToFolder(${realIndex}, this.value)">
-              <option value="">Sem Pasta</option>
-              ${folders.map(f => `<option value="${f.id}" ${obj.folderId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
-            </select>
-            <button class="btn-icon" title="Renomear" onclick="renameLayer(event, ${realIndex})">✏️</button>
-            <button class="btn-icon" title="${isVisible ? 'Ocultar' : 'Mostrar'}" onclick="toggleVisibility(event, ${realIndex})">
-              ${isVisible ? '👁️' : '🙈'}
-            </button>
+        html += `
+          <div class="layer-item ${isPathObj ? 'is-path' : ''} ${isSelected ? 'active' : ''}" 
+               style="position: absolute; top: ${topPos}px; left: 0; right: 0; height: 32px;"
+               onclick="selectLayerDirectly(${realIndex})">
+            <div class="layer-info">
+              <span title="Duplo clique para renomear" ondblclick="renameLayer(event, ${realIndex})">${name}</span>
+            </div>
+            <div class="layer-actions">
+              <button class="btn-icon" title="Renomear" onclick="renameLayer(event, ${realIndex})">✏️</button>
+              <button class="btn-icon" title="${isVisible ? 'Ocultar' : 'Mostrar'}" onclick="toggleVisibility(event, ${realIndex})">
+                ${isVisible ? '👁️' : '🙈'}
+              </button>
+            </div>
           </div>
         `;
+      }
 
-        item.onclick = function (e) {
-          if (['BUTTON', 'SELECT'].includes(e.target.tagName)) return;
-          if (currentTool === 'select') {
-            if (obj.visible !== false) {
-              canvas.setActiveObject(obj);
-              canvas.renderAll();
-              updateLayerPanel();
-            } else {
-              showStatus('💡 Torne a camada visível antes de a selecionar.');
-            }
-          }
-        };
+      html += `</div>`;
+      layerList.innerHTML = html;
+    }
 
-        if (obj.folderId && document.getElementById(obj.folderId)) {
-          document.getElementById(obj.folderId).appendChild(item);
+    function selectLayerDirectly(realIndex) {
+      const objects = canvas.getObjects();
+      const obj = objects[realIndex];
+      if (obj && currentTool === 'select') {
+        if (obj.visible !== false) {
+          canvas.setActiveObject(obj);
+          canvas.requestRenderAll();
+          highlightActiveLayer();
         } else {
-          layerList.appendChild(item);
-        }
-      });
-    }
-
-    function toggleFolder(id) {
-      const f = folders.find(f => f.id === id);
-      if (f) {
-        f.open = !f.open;
-        updateLayerPanel();
-      }
-    }
-
-    function renameFolder(id) {
-      const f = folders.find(f => f.id === id);
-      if (f) {
-        const oldName = f.name;
-        const newName = prompt('Novo nome para a pasta:', f.name);
-        if (newName) { 
-          f.name = newName; 
-          updateLayerPanel();
-          recordHistoryAction(`Pasta renomeada: ${newName}`, () => {
-            f.name = oldName;
-            updateLayerPanel();
-          });
+          showStatus('💡 Torne a camada visível antes de a selecionar.');
         }
       }
     }
 
-    function deleteFolder(id) {
-      const idx = folders.findIndex(f => f.id === id);
-      if (idx !== -1) {
-        const removedFolder = folders[idx];
-        canvas.getObjects().forEach(o => { if (o.folderId === id) delete o.folderId; });
-        folders.splice(idx, 1);
-        updateLayerPanel();
-
-        recordHistoryAction('Pasta eliminada', () => {
-          folders.push(removedFolder);
-          updateLayerPanel();
-        });
+    function highlightActiveLayer() {
+      renderVirtualLayers();
+      const activeObj = canvas.getActiveObject() || targetEraserObj;
+      if (activeObj) {
+        const objects = canvas.getObjects();
+        const realIndex = objects.indexOf(activeObj);
+        if (realIndex !== -1) {
+          const virtualIndex = virtualObjectsList.length - 1 - realIndex;
+          const layerList = document.getElementById('layerList');
+          if (layerList) {
+            const targetScrollTop = virtualIndex * ITEM_HEIGHT - (layerList.clientHeight / 2);
+            layerList.scrollTop = Math.max(0, targetScrollTop);
+          }
+        }
       }
     }
 
-    function moveObjToFolder(objIdx, folderId) {
-      const obj = canvas.getObjects()[objIdx];
-      if (obj) {
-        const oldFolderId = obj.folderId;
-        obj.folderId = folderId || null;
+    function createFolder() {
+      const name = prompt('Nome da nova pasta:', `Pasta ${folders.length + 1}`);
+      if (name) {
+        folders.push({ id: 'folder_' + Date.now(), name: name, open: true });
         updateLayerPanel();
-
-        recordHistoryAction('Mover para Pasta', () => {
-          obj.folderId = oldFolderId;
-          updateLayerPanel();
+        recordHistoryAction(`Criada Pasta: ${name}`, () => {
+          const idx = folders.findIndex(f => f.name === name);
+          if (idx !== -1) folders.splice(idx, 1);
         });
+        showStatus('📁 Pasta criada!');
       }
     }
 
@@ -1962,23 +1934,23 @@
         if (!obj.visible && canvas.getActiveObject() === obj) {
           canvas.discardActiveObject();
         }
-        canvas.renderAll();
+        canvas.requestRenderAll();
         updateLayerPanel();
 
         recordHistoryAction('Visibilidade alterada', () => {
           obj.visible = !obj.visible;
-          canvas.renderAll();
+          canvas.requestRenderAll();
           updateLayerPanel();
         });
       }
     }
 
-    canvas.on('selection:created', updateLayerPanel);
-    canvas.on('selection:updated', updateLayerPanel);
-    canvas.on('selection:cleared', updateLayerPanel);
+    canvas.on('selection:created', highlightActiveLayer);
+    canvas.on('selection:updated', highlightActiveLayer);
+    canvas.on('selection:cleared', highlightActiveLayer);
 
     // -------------------------------------------------------------
-    // CONTROLO DE ZOOM
+    // ZOOM E NAVEGAÇÃO
     // -------------------------------------------------------------
     function updateZoomIndicator() {
       const zoomPercent = Math.round(canvas.getZoom() * 100);
